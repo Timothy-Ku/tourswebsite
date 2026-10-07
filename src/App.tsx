@@ -204,7 +204,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
   return (
     <div className="fade-in">
       {/* Interactive Hero Section with Premium Layered Crossfade and Scale Effects */}
-      <section className="relative h-[80vh] lg:h-[85vh] flex items-center overflow-hidden bg-[#1C2421] select-none">
+      <section className="relative min-h-[90vh] sm:h-[80vh] lg:h-[85vh] flex items-center overflow-hidden bg-[#1C2421] select-none">
         
         {/* Dynamic stacked crossfade slides */}
         {slides.map((slide, idx) => (
@@ -215,7 +215,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
             }`}
           >
             {/* Dark Charcoal gradient scrim */}
-            <div className="absolute inset-0 bg-gradient-to-r from-[#1C2421]/90 via-[#1C2421]/45 to-[#1C2421]/60 z-10" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#1C2421]/95 via-[#1C2421]/50 to-[#1C2421]/65 z-10" />
             
             {/* Ken Burns image effect */}
             <img 
@@ -228,33 +228,33 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
             />
 
             {/* Main Content Row aligned precisely inside each slide layer for smooth crossfade */}
-            <div className="absolute inset-0 z-20 flex items-center">
-              <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row items-center justify-between gap-12">
+            <div className="absolute inset-0 z-20 flex items-center py-6 sm:py-0 overflow-y-auto no-scrollbar">
+              <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12 mt-12 sm:mt-0">
                 
                 {/* Left Text Block (Spacious, Simplified, with elegant delayed slide-up motion) */}
-                <div className={`text-white max-w-lg space-y-5 text-left transition-all duration-1000 transform ${
+                <div className={`text-white max-w-lg space-y-4 sm:space-y-5 text-left transition-all duration-1000 transform ${
                   activeSlide === idx ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
                 }`}>
-                  <span className="text-[#C5A880] tracking-[0.2em] uppercase font-bold text-xs block">
+                  <span className="text-[#C5A880] tracking-[0.2em] uppercase font-bold text-[10px] sm:text-xs block">
                     {slide.kicker}
                   </span>
-                  <h1 className="font-serif text-4xl sm:text-5xl md:text-6xl font-normal leading-[1.1] text-wrap-balance">
+                  <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-normal leading-[1.15] sm:leading-[1.1] text-wrap-balance">
                     {slide.title}
                   </h1>
-                  <p className="text-stone-300 text-sm sm:text-base leading-relaxed font-light">
+                  <p className="text-stone-300 text-xs sm:text-sm md:text-base leading-relaxed font-light line-clamp-4 sm:line-clamp-none">
                     {slide.description}
                   </p>
 
-                  <div className="flex items-center gap-6 pt-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6 pt-2">
                     <button
                       onClick={() => onNavigate('#/destinations')}
-                      className="px-7 py-3 bg-[#C5A880] hover:bg-white text-[#1C2421] font-bold text-xs uppercase tracking-widest rounded-full transition-all duration-300 shadow-sm cursor-pointer"
+                      className="px-7 py-3.5 sm:py-3 bg-[#C5A880] hover:bg-white text-[#1C2421] font-bold text-xs uppercase tracking-widest rounded-full transition-all duration-300 shadow-sm cursor-pointer text-center"
                     >
                       EXPLORE DESTINATIONS
                     </button>
                     
                     {/* Category Toggles (Dots) */}
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 justify-center sm:justify-start">
                       {slides.map((_, dotIdx) => (
                         <button
                           key={dotIdx}
@@ -274,19 +274,19 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
                   </div>
                 </div>
 
-                {/* Right side: Luxurious Safari Badge Overlay */}
-                <div className={`relative shrink-0 transition-all duration-1000 transform ${
+                {/* Right side: Luxurious Safari Badge Overlay - Optimized sizing, hidden on small screens */}
+                <div className={`hidden sm:block relative shrink-0 transition-all duration-1000 transform origin-center scale-80 md:scale-90 lg:scale-100 ${
                   activeSlide === idx ? 'opacity-100 scale-100 rotate-0' : 'opacity-0 scale-95 -rotate-1'
                 }`}>
                   {/* Overlapping Badge */}
-                  <div className="absolute -top-3 -right-3 z-30 w-20 h-24 bg-white text-[#1C2421] font-sans font-bold rounded-full flex flex-col justify-center items-center text-center shadow-lg border border-[#C5A880]/15 text-[8px] uppercase tracking-wider">
+                  <div className="absolute -top-3 -right-3 z-30 w-16 h-20 sm:w-20 sm:h-24 bg-white text-[#1C2421] font-sans font-bold rounded-full flex flex-col justify-center items-center text-center shadow-lg border border-[#C5A880]/15 text-[8px] uppercase tracking-wider">
                     <span>{slide.badge}</span>
                     <span className="text-[#C5A880] text-xs font-bold font-serif">{slide.badgeYear}</span>
                     <span>Bespoke</span>
                   </div>
 
                   {/* Main elegant circular card with charcoal-gold gradient */}
-                  <div className="relative z-20 w-[300px] h-[310px] sm:w-[360px] sm:h-[360px] rounded-full bg-gradient-to-tr from-[#1C2421]/95 via-[#2E2520]/90 to-[#C5A880]/20 backdrop-blur-md border border-white/10 flex flex-col justify-center items-center p-8 text-center text-white shadow-2xl">
+                  <div className="relative z-20 w-[280px] h-[290px] sm:w-[320px] sm:h-[330px] lg:w-[360px] lg:h-[360px] rounded-full bg-gradient-to-tr from-[#1C2421]/95 via-[#2E2520]/90 to-[#C5A880]/20 backdrop-blur-md border border-white/10 flex flex-col justify-center items-center p-6 lg:p-8 text-center text-white shadow-2xl">
                     
                     {/* Top zigzag line */}
                     <div className="text-[#C5A880] text-lg font-bold tracking-widest mb-1.5 select-none font-mono">
@@ -294,23 +294,23 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
                     </div>
 
                     {/* Dynamic titles */}
-                    <span className="text-[10px] uppercase tracking-[0.25em] text-[#C5A880] font-bold mb-1 font-sans">Safari Design</span>
-                    <h2 className="font-serif text-3xl sm:text-4xl font-normal tracking-wide leading-none uppercase">
+                    <span className="text-[9px] lg:text-[10px] uppercase tracking-[0.25em] text-[#C5A880] font-bold mb-1 font-sans">Safari Design</span>
+                    <h2 className="font-serif text-2xl sm:text-3xl lg:text-4xl font-normal tracking-wide leading-none uppercase">
                       {slide.circlePackage.split(' ')[0]}
                     </h2>
-                    <h3 className="font-sans text-xl sm:text-2xl font-light text-stone-200 uppercase tracking-widest mt-1 mb-2">
+                    <h3 className="font-sans text-lg sm:text-xl lg:text-2xl font-light text-stone-200 uppercase tracking-widest mt-1 mb-2">
                       {slide.circlePackage.split(' ').slice(1).join(' ')}
                     </h3>
                     
                     {/* Highlight */}
-                    <div className="text-xs sm:text-sm font-bold font-sans text-stone-300 uppercase tracking-wider mb-5">
+                    <div className="text-xs sm:text-sm font-bold font-sans text-stone-300 uppercase tracking-wider mb-4 lg:mb-5">
                       {slide.circleSubtitle}
                     </div>
 
                     {/* Outline capsule button */}
                     <button
                       onClick={() => onNavigate(slide.circleActionHash)}
-                      className="px-6 py-2 border-2 border-[#C5A880] hover:border-white hover:bg-white/5 text-white hover:text-[#C5A880] font-bold text-xs uppercase tracking-widest rounded-full transition-all duration-300 cursor-pointer font-sans"
+                      className="px-5 py-2 border-2 border-[#C5A880] hover:border-white hover:bg-white/5 text-white hover:text-[#C5A880] font-bold text-xs uppercase tracking-widest rounded-full transition-all duration-300 cursor-pointer font-sans"
                     >
                       Explore Now
                     </button>
