@@ -228,20 +228,20 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
             />
 
             {/* Main Content Row aligned precisely inside each slide layer for smooth crossfade */}
-            <div className="absolute inset-0 z-20 flex items-center py-6 sm:py-0 overflow-y-auto no-scrollbar">
-              <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12 mt-12 sm:mt-0">
+            <div className="absolute inset-0 z-20 flex items-center py-6 md:py-0 overflow-y-auto no-scrollbar">
+              <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-8 md:gap-6 lg:gap-12 mt-6 md:mt-0">
                 
                 {/* Left Text Block (Spacious, Simplified, with elegant delayed slide-up motion) */}
-                <div className={`text-white max-w-lg space-y-4 sm:space-y-5 text-left transition-all duration-1000 transform ${
+                <div className={`text-white max-w-lg md:max-w-md lg:max-w-lg space-y-4 sm:space-y-5 text-left transition-all duration-1000 transform ${
                   activeSlide === idx ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
                 }`}>
                   <span className="text-[#C5A880] tracking-[0.2em] uppercase font-bold text-[10px] sm:text-xs block">
                     {slide.kicker}
                   </span>
-                  <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-normal leading-[1.15] sm:leading-[1.1] text-wrap-balance">
+                  <h1 className="font-serif text-3xl sm:text-4xl md:text-4xl lg:text-6xl font-normal leading-[1.15] sm:leading-[1.1] text-wrap-balance">
                     {slide.title}
                   </h1>
-                  <p className="text-stone-300 text-xs sm:text-sm md:text-base leading-relaxed font-light line-clamp-4 sm:line-clamp-none">
+                  <p className="text-stone-300 text-xs sm:text-sm md:text-sm lg:text-base leading-relaxed font-light line-clamp-4 sm:line-clamp-none">
                     {slide.description}
                   </p>
 
@@ -274,8 +274,8 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
                   </div>
                 </div>
 
-                {/* Right side: Luxurious Safari Badge Overlay - Optimized sizing, hidden on small screens */}
-                <div className={`hidden sm:block relative shrink-0 transition-all duration-1000 transform origin-center scale-80 md:scale-90 lg:scale-100 ${
+                {/* Right side: Luxurious Safari Badge Overlay - Optimized sizing, hidden on mobile, shown and scaled on tablet/desktop */}
+                <div className={`hidden md:block relative shrink-0 transition-all duration-1000 transform origin-center scale-75 lg:scale-100 ${
                   activeSlide === idx ? 'opacity-100 scale-100 rotate-0' : 'opacity-0 scale-95 -rotate-1'
                 }`}>
                   {/* Overlapping Badge */}
