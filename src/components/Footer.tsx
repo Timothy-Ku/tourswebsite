@@ -145,6 +145,8 @@ export default function Footer({ onNavigate }: FooterProps) {
         <div className="flex gap-6 mt-4 md:mt-0">
           <button onClick={() => handleLinkClick('#/about')} className="hover:text-stone-300">Privacy Policy</button>
           <button onClick={() => handleLinkClick('#/about')} className="hover:text-stone-300">Terms of Service</button>
+          <span className="text-stone-700">|</span>
+          <button onClick={() => handleLinkClick('#/admin')} className="hover:text-[#C5A880] text-[#C5A880]/80 font-bold transition-colors">Concierge Portal</button>
         </div>
       </div>
     </footer>

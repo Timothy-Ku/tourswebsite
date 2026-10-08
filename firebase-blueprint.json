@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "Destination": {
+      "title": "Destination",
+      "description": "A luxury travel destination",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "image": { "type": "string", "maxLength": 1024 },
+        "category": { "type": "string", "maxLength": 100 },
+        "intro": { "type": "string", "maxLength": 1000 },
+        "whyVisit": { "type": "array" },
+        "topExperiences": { "type": "array" },
+        "attractions": { "type": "array" },
+        "bestTimeToVisit": { "type": "string", "maxLength": 200 },
+        "travelTips": { "type": "string", "maxLength": 2000 },
+        "relatedTours": { "type": "array" },
+        "faq": { "type": "array" }
+      },
+      "required": ["id", "name"]
+    },
+    "Tour": {
+      "title": "Tour",
+      "description": "A premium safari or luxury travel package",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "destination": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 100 },
+        "image": { "type": "string", "maxLength": 1024 },
+        "duration": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "overview": { "type": "string", "maxLength": 5000 },
+        "highlights": { "type": "array" },
+        "itinerary": { "type": "array" },
+        "whatToExpect": { "type": "string", "maxLength": 5000 },
+        "bestTimeToGo": { "type": "string", "maxLength": 200 },
+        "whatToBring": { "type": "array" },
+        "faq": { "type": "array" }
+      },
+      "required": ["id", "name", "destination"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "A travel guide blog post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string", "maxLength": 30 },
+        "excerpt": { "type": "string", "maxLength": 500 },
+        "content": { "type": "string", "maxLength": 20000 },
+        "metaDescription": { "type": "string", "maxLength": 300 },
+        "author": { "type": "string", "maxLength": 100 },
+        "related": { "type": "array" }
+      },
+      "required": ["id", "title"]
+    },
+    "Enquiry": {
+      "title": "Enquiry",
+      "description": "A booking or customization inquiry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "country": { "type": "string", "maxLength": 100 },
+        "destination": { "type": "string", "maxLength": 100 },
+        "travelDate": { "type": "string", "maxLength": 100 },
+        "travelers": { "type": "string", "maxLength": 20 },
+        "style": { "type": "string", "maxLength": 100 },
+        "message": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "maxLength": 50 },
+        "dateSubmitted": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["id", "name", "email"]
+    }
+  },
+  "firestore": {
+    "destinations/{destId}": {
+      "schema": "Destination",
+      "description": "Collection of destinations available on the website"
+    },
+    "tours/{tourId}": {
+      "schema": "Tour",
+      "description": "Collection of tours and packages on the website"
+    },
+    "blogs/{blogId}": {
+      "schema": "Article",
+      "description": "Collection of travel guide articles and news"
+    },
+    "enquiries/{enqId}": {
+      "schema": "Enquiry",
+      "description": "Collection of travel planner submissions"
+    }
+  }
+}

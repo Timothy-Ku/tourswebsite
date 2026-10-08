@@ -13,12 +13,21 @@ export default function SEOUpdater({ currentHash }: SEOUpdaterProps) {
     // Parse path
     const hash = currentHash || '#/';
     
+    // Read from localStorage if available, otherwise fallback to static imports
+    const storedDests = localStorage.getItem('kagz_destinations');
+    const storedTours = localStorage.getItem('kagz_tours');
+    const storedBlogs = localStorage.getItem('kagz_blogs');
+
+    const destinationsList = storedDests ? JSON.parse(storedDests) : destinationsData;
+    const toursList = storedTours ? JSON.parse(storedTours) : toursData;
+    const blogsList = storedBlogs ? JSON.parse(storedBlogs) : blogData;
+    
     if (hash === '#/') {
       title = 'KAGZ — Premium African Travel, Safaris & Experiences';
       description = 'Explore unforgettable destinations, extraordinary wildlife, rich cultures, and meaningful travel experiences with KAGZ.';
     } else if (hash.startsWith('#/destinations/')) {
       const destId = hash.replace('#/destinations/', '');
-      const dest = destinationsData.find(d => d.id === destId);
+      const dest = destinationsList.find((d: any) => d.id === destId);
       if (dest) {
         title = `${dest.name} Custom Luxury Safaris & Travel Guide | KAGZ`;
         description = `${dest.intro.substring(0, 150)}... Discover things to do, top attractions, and premium itineraries for ${dest.name} with KAGZ.`;
@@ -28,7 +37,7 @@ export default function SEOUpdater({ currentHash }: SEOUpdaterProps) {
       description = 'Search and filter premium travel destinations across East and Southern Africa, including Kenya, Tanzania, Zanzibar, Uganda, Rwanda, and South Africa.';
     } else if (hash.startsWith('#/tours/')) {
       const tourId = hash.replace('#/tours/', '');
-      const tour = toursData.find(t => t.id === tourId);
+      const tour = toursList.find((t: any) => t.id === tourId);
       if (tour) {
         title = `${tour.name} (${tour.duration}) | KAGZ Safaris`;
         description = `${tour.description} Experience luxury lodging, private guiding, and hand-selected highlights in Africa.`;
@@ -38,7 +47,7 @@ export default function SEOUpdater({ currentHash }: SEOUpdaterProps) {
       description = 'Discover premium tour itineraries, including wildlife safaris, tropical beach escapes, culture heritage trips, and mountain treks.';
     } else if (hash.startsWith('#/guide/')) {
       const articleId = hash.replace('#/guide/', '');
-      const article = blogData.find(b => b.id === articleId);
+      const article = blogsList.find((b: any) => b.id === articleId);
       if (article) {
         title = `${article.title} | KAGZ Travel Guide`;
         description = article.metaDescription || article.excerpt;

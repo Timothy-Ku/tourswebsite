@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Catch-all Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'kungutim541@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 3. Schema & Type Validation Helpers (Pillar 2)
+    function isValidDestination(data) {
+      return data.id is string && data.id.size() <= 100 &&
+             data.name is string && data.name.size() <= 100 &&
+             (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 200)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 1024)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('intro' in data) || (data.intro is string && data.intro.size() <= 1000)) &&
+             (!('whyVisit' in data) || (data.whyVisit is list && data.whyVisit.size() <= 20 && (data.whyVisit.size() == 0 || data.whyVisit[0] is string))) &&
+             (!('topExperiences' in data) || (data.topExperiences is list && data.topExperiences.size() <= 20 && (data.topExperiences.size() == 0 || data.topExperiences[0] is string))) &&
+             (!('attractions' in data) || (data.attractions is list && data.attractions.size() <= 20 && (data.attractions.size() == 0 || data.attractions[0] is string))) &&
+             (!('bestTimeToVisit' in data) || (data.bestTimeToVisit is string && data.bestTimeToVisit.size() <= 200)) &&
+             (!('travelTips' in data) || (data.travelTips is string && data.travelTips.size() <= 2000)) &&
+             (!('relatedTours' in data) || (data.relatedTours is list && data.relatedTours.size() <= 20 && (data.relatedTours.size() == 0 || data.relatedTours[0] is string))) &&
+             (!('faq' in data) || (data.faq is list && data.faq.size() <= 20 && (data.faq.size() == 0 || data.faq[0] is map)));
+    }
+
+    function isValidTour(data) {
+      return data.id is string && data.id.size() <= 100 &&
+             data.name is string && data.name.size() <= 150 &&
+             data.destination is string && data.destination.size() <= 100 &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 1024)) &&
+             (!('duration' in data) || (data.duration is string && data.duration.size() <= 50)) &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+             (!('overview' in data) || (data.overview is string && data.overview.size() <= 5000)) &&
+             (!('highlights' in data) || (data.highlights is list && data.highlights.size() <= 30 && (data.highlights.size() == 0 || data.highlights[0] is string))) &&
+             (!('itinerary' in data) || (data.itinerary is list && data.itinerary.size() <= 50 && (data.itinerary.size() == 0 || data.itinerary[0] is map))) &&
+             (!('whatToExpect' in data) || (data.whatToExpect is string && data.whatToExpect.size() <= 5000)) &&
+             (!('bestTimeToGo' in data) || (data.bestTimeToGo is string && data.bestTimeToGo.size() <= 200)) &&
+             (!('whatToBring' in data) || (data.whatToBring is list && data.whatToBring.size() <= 30 && (data.whatToBring.size() == 0 || data.whatToBring[0] is string))) &&
+             (!('faq' in data) || (data.faq is list && data.faq.size() <= 20 && (data.faq.size() == 0 || data.faq[0] is map)));
+    }
+
+    function isValidArticle(data) {
+      return data.id is string && data.id.size() <= 100 &&
+             data.title is string && data.title.size() <= 200 &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('date' in data) || (data.date is string && data.date.size() <= 30)) &&
+             (!('excerpt' in data) || (data.excerpt is string && data.excerpt.size() <= 500)) &&
+             (!('content' in data) || (data.content is string && data.content.size() <= 20000)) &&
+             (!('metaDescription' in data) || (data.metaDescription is string && data.metaDescription.size() <= 300)) &&
+             (!('author' in data) || (data.author is string && data.author.size() <= 100)) &&
+             (!('related' in data) || (data.related is list && data.related.size() <= 20 && (data.related.size() == 0 || data.related[0] is string)));
+    }
+
+    function isValidEnquiry(data) {
+      return data.id is string && data.id.size() <= 100 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 50)) &&
+             (!('country' in data) || (data.country is string && data.country.size() <= 100)) &&
+             (!('destination' in data) || (data.destination is string && data.destination.size() <= 100)) &&
+             (!('travelDate' in data) || (data.travelDate is string && data.travelDate.size() <= 100)) &&
+             (!('travelers' in data) || (data.travelers is string && data.travelers.size() <= 20)) &&
+             (!('style' in data) || (data.style is string && data.style.size() <= 100)) &&
+             (!('message' in data) || (data.message is string && data.message.size() <= 2000)) &&
+             (!('status' in data) || (data.status is string && data.status.size() <= 50)) &&
+             (!('dateSubmitted' in data) || (data.dateSubmitted is string && data.dateSubmitted.size() <= 30));
+    }
+
+    // 4. Collection Rules
+
+    // Destinations collection rules
+    match /destinations/{destId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(destId) && isValidDestination(incoming()) && incoming().id == destId;
+      allow update: if isAdmin() && isValidDestination(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // Tours collection rules
+    match /tours/{tourId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(tourId) && isValidTour(incoming()) && incoming().id == tourId;
+      allow update: if isAdmin() && isValidTour(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // Blogs (Articles) collection rules
+    match /blogs/{blogId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(blogId) && isValidArticle(incoming()) && incoming().id == blogId;
+      allow update: if isAdmin() && isValidArticle(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // Enquiries collection rules
+    match /enquiries/{enqId} {
+      // Unauthenticated public can submit enquiries, but only admins can view or update/delete them
+      allow create: if isValidId(enqId) && isValidEnquiry(incoming()) && incoming().id == enqId;
+      allow read: if isAdmin();
+      allow update: if isAdmin() && isValidEnquiry(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // Admins collection rules (optional meta lookup)
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

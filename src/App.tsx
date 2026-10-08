@@ -25,7 +25,19 @@ import {
   Compass as SafariIcon,
   Tent,
   Sparkles,
-  ChevronLeft
+  ChevronLeft,
+  Sliders,
+  Database,
+  Trash2,
+  TrendingUp,
+  UserCheck,
+  RefreshCw,
+  FileText,
+  Lock,
+  Edit3,
+  LogOut,
+  Eye,
+  Globe
 } from 'lucide-react';
 
 // Decoupled modules
@@ -43,6 +55,22 @@ import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import SEOUpdater from './components/SEOUpdater';
 import EnquirySuccess from './components/EnquirySuccess';
+import { 
+  db, 
+  auth, 
+  loginWithGoogle, 
+  logoutUser, 
+  handleFirestoreError, 
+  OperationType 
+} from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  onSnapshot 
+} from 'firebase/firestore';
 
 export default function App() {
   const [currentHash, setCurrentHash] = useState(window.location.hash || '#/');
@@ -50,6 +78,144 @@ export default function App() {
 
   // General Form States
   const [planSuccessData, setPlanSuccessData] = useState<any | null>(null);
+  const [enquiries, setEnquiries] = useState<any[]>([]);
+  
+  // Dynamic CMS States
+  const [destinations, setDestinations] = useState<Destination[]>(destinationsData);
+  const [tours, setTours] = useState<Tour[]>(toursData);
+  const [blogs, setBlogs] = useState<Article[]>(blogData);
+
+  // Firebase Auth State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAdminUser, setIsAdminUser] = useState(false);
+
+  // Auth Subscription
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user && user.email === 'kungutim541@gmail.com') {
+        setIsAdminUser(true);
+      } else {
+        setIsAdminUser(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load and subscribe to collections from Firestore
+  useEffect(() => {
+    // 1. Destinations Subscription
+    const unsubDests = onSnapshot(collection(db, 'destinations'), (snapshot) => {
+      if (!snapshot.empty) {
+        const list: Destination[] = [];
+        snapshot.forEach((doc) => {
+          list.push(doc.data() as Destination);
+        });
+        setDestinations(list);
+      } else {
+        setDestinations(destinationsData);
+      }
+    }, (error) => {
+      console.warn("Firestore access error for destinations, falling back to static:", error);
+      setDestinations(destinationsData);
+    });
+
+    // 2. Tours Subscription
+    const unsubTours = onSnapshot(collection(db, 'tours'), (snapshot) => {
+      if (!snapshot.empty) {
+        const list: Tour[] = [];
+        snapshot.forEach((doc) => {
+          list.push(doc.data() as Tour);
+        });
+        setTours(list);
+      } else {
+        setTours(toursData);
+      }
+    }, (error) => {
+      console.warn("Firestore access error for tours, falling back to static:", error);
+      setTours(toursData);
+    });
+
+    // 3. Blogs Subscription
+    const unsubBlogs = onSnapshot(collection(db, 'blogs'), (snapshot) => {
+      if (!snapshot.empty) {
+        const list: Article[] = [];
+        snapshot.forEach((doc) => {
+          list.push(doc.data() as Article);
+        });
+        setBlogs(list);
+      } else {
+        setBlogs(blogData);
+      }
+    }, (error) => {
+      console.warn("Firestore access error for blogs, falling back to static:", error);
+      setBlogs(blogData);
+    });
+
+    // 4. Enquiries Subscription (Only if admin is logged in locally or via Google Auth)
+    let unsubEnquiries = () => {};
+    const localSessionActive = localStorage.getItem('kagz_admin_session') === 'active';
+    const isUserAdmin = localSessionActive || isAdminUser;
+
+    if (isUserAdmin) {
+      unsubEnquiries = onSnapshot(collection(db, 'enquiries'), (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => {
+          list.push(doc.data());
+        });
+        list.sort((a, b) => b.id.localeCompare(a.id));
+        setEnquiries(list);
+      }, (error) => {
+        console.warn("Firestore access error for enquiries, using local storage fallback:", error);
+        const stored = localStorage.getItem('kagz_enquiries');
+        if (stored) setEnquiries(JSON.parse(stored));
+      });
+    } else {
+      const stored = localStorage.getItem('kagz_enquiries');
+      if (stored) {
+        setEnquiries(JSON.parse(stored));
+      } else {
+        setEnquiries([]);
+      }
+    }
+
+    return () => {
+      unsubDests();
+      unsubTours();
+      unsubBlogs();
+      unsubEnquiries();
+    };
+  }, [isAdminUser]);
+
+  // Centralized enquiry submission handler (Writes to Firestore, falls back to local storage)
+  const handleNewEnquiry = async (enquiryData: any) => {
+    const id = `enq-${Date.now()}`;
+    const newEnq = {
+      id,
+      name: enquiryData.name || 'Anonymous Traveler',
+      email: enquiryData.email || 'no-email@kagztravel.com',
+      phone: enquiryData.phone || 'N/A',
+      country: enquiryData.country || 'N/A',
+      destination: enquiryData.destination || 'Kenya',
+      travelDate: enquiryData.travelDate || 'flexible',
+      travelers: enquiryData.travelers || '2',
+      style: enquiryData.style || 'Classic Luxury Safari',
+      message: enquiryData.message || '',
+      status: 'New Enquiry',
+      dateSubmitted: new Date().toISOString().split('T')[0]
+    };
+    
+    try {
+      await setDoc(doc(db, 'enquiries', id), newEnq);
+      setEnquiries(prev => [newEnq, ...prev]);
+    } catch (err) {
+      console.warn("Failed to write enquiry to Firestore, storing locally:", err);
+      const updated = [newEnq, ...enquiries];
+      setEnquiries(updated);
+      localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    }
+    setPlanSuccessData(enquiryData);
+  };
 
   // Hash-based client routing
   useEffect(() => {
@@ -89,6 +255,7 @@ export default function App() {
     if (hash === '#/gallery') return { page: 'gallery', id: null };
     if (hash === '#/contact') return { page: 'contact', id: null };
     if (hash === '#/plan') return { page: 'plan', id: null };
+    if (hash === '#/admin') return { page: 'admin', id: null };
 
     return { page: 'home', id: null };
   };
@@ -101,6 +268,32 @@ export default function App() {
     e.currentTarget.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="800" height="600" fill="%231C2421"/><path d="M400,220 L550,420 L250,420 Z" fill="%23C5A880" opacity="0.8"/><circle cx="400" cy="160" r="40" fill="%23EADCC9"/><text x="400" y="480" font-family="serif" font-size="24" fill="%23FAF7F2" text-anchor="middle">KAGZ Wilderness Experience</text></svg>';
   };
 
+  // Clean Separation: If this is the Internal Admin Portal, bypass visitor Navbar & Footer entirely
+  if (route.page === 'admin') {
+    return (
+      <div className="min-h-screen flex flex-col font-sans bg-[#FAF7F2]">
+        <SEOUpdater currentHash={currentHash} />
+        
+        {/* Clean, standalone Admin portal (Zero customer-facing components) */}
+        <main className="flex-grow">
+          <AdminDashboardView 
+            enquiries={enquiries} 
+            setEnquiries={setEnquiries} 
+            destinations={destinations}
+            setDestinations={setDestinations}
+            tours={tours}
+            setTours={setTours}
+            blogs={blogs}
+            setBlogs={setBlogs}
+            onNavigate={navigateTo} 
+            currentUser={currentUser}
+            isAdminUser={isAdminUser}
+          />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col font-sans bg-[#FAF7F2]">
       {/* Dynamic SEO Updater */}
@@ -109,19 +302,19 @@ export default function App() {
       {/* Global Navigation Bar */}
       <Navbar currentHash={currentHash} onNavigate={navigateTo} />
 
-      {/* Main Page Render Pipeline */}
+      {/* Main Page Render Pipeline with Dynamic CMS State Arrays */}
       <main className="flex-grow">
-        {route.page === 'home' && <HomeView onNavigate={navigateTo} onImageError={handleImageError} setLightboxImage={setLightboxImage} />}
-        {route.page === 'destinations' && <DestinationsView onNavigate={navigateTo} onImageError={handleImageError} />}
-        {route.page === 'destination' && <DestinationDetailView id={route.id || 'kenya'} onNavigate={navigateTo} onImageError={handleImageError} setPlanSuccessData={setPlanSuccessData} />}
-        {route.page === 'tours' && <ToursView onNavigate={navigateTo} onImageError={handleImageError} />}
-        {route.page === 'tour' && <TourDetailView id={route.id || 'maasai-mara-safari'} onNavigate={navigateTo} onImageError={handleImageError} setPlanSuccessData={setPlanSuccessData} />}
+        {route.page === 'home' && <HomeView onNavigate={navigateTo} onImageError={handleImageError} setLightboxImage={setLightboxImage} destinations={destinations} tours={tours} blogs={blogs} />}
+        {route.page === 'destinations' && <DestinationsView onNavigate={navigateTo} onImageError={handleImageError} destinations={destinations} />}
+        {route.page === 'destination' && <DestinationDetailView id={route.id || 'kenya'} onNavigate={navigateTo} onImageError={handleImageError} setPlanSuccessData={handleNewEnquiry} destinations={destinations} tours={tours} />}
+        {route.page === 'tours' && <ToursView onNavigate={navigateTo} onImageError={handleImageError} tours={tours} />}
+        {route.page === 'tour' && <TourDetailView id={route.id || 'maasai-mara-safari'} onNavigate={navigateTo} onImageError={handleImageError} setPlanSuccessData={handleNewEnquiry} tours={tours} />}
         {route.page === 'about' && <AboutView onNavigate={navigateTo} onImageError={handleImageError} />}
-        {route.page === 'guide' && <GuideView onNavigate={navigateTo} onImageError={handleImageError} />}
-        {route.page === 'blog' && <BlogDetailView id={route.id || 'best-time-to-visit-kenya'} onNavigate={navigateTo} onImageError={handleImageError} />}
+        {route.page === 'guide' && <GuideView onNavigate={navigateTo} onImageError={handleImageError} blogs={blogs} />}
+        {route.page === 'blog' && <BlogDetailView id={route.id || 'best-time-to-visit-kenya'} onNavigate={navigateTo} onImageError={handleImageError} blogs={blogs} destinations={destinations} />}
         {route.page === 'gallery' && <GalleryPageView onImageError={handleImageError} setLightboxImage={setLightboxImage} />}
-        {route.page === 'contact' && <ContactView setPlanSuccessData={setPlanSuccessData} planSuccessData={planSuccessData} />}
-        {route.page === 'plan' && <PlanView setPlanSuccessData={setPlanSuccessData} planSuccessData={planSuccessData} />}
+        {route.page === 'contact' && <ContactView setPlanSuccessData={handleNewEnquiry} planSuccessData={planSuccessData} />}
+        {route.page === 'plan' && <PlanView setPlanSuccessData={handleNewEnquiry} planSuccessData={planSuccessData} />}
       </main>
 
       {/* Global Interactive Lightbox for Galleries */}
@@ -163,9 +356,12 @@ interface HomeViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
   setLightboxImage: (img: { src: string; alt: string } | null) => void;
+  destinations: Destination[];
+  tours: Tour[];
+  blogs: Article[];
 }
 
-function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps) {
+function HomeView({ onNavigate, onImageError, setLightboxImage, destinations, tours, blogs }: HomeViewProps) {
   const [activeSlide, setActiveSlide] = useState(0);
 
   const slides = [
@@ -173,7 +369,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
       title: "Discover Africa. Experience More.",
       kicker: "The KAGZ Wilderness Curation",
       description: "Explore slow-paced, carefully curated safari adventures across East and Southern Africa, developed directly with native rangers and ecological partners.",
-      background: destinationsData.find(d => d.id === 'kenya')?.image || "",
+      background: destinations.find(d => d.id === 'kenya')?.image || undefined,
       badge: "Savanna",
       badgeYear: "KEN",
       circlePackage: "Maasai Mara",
@@ -184,7 +380,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
       title: "Secluded Tropical Shores.",
       kicker: "Swahili-Arabic Heritage",
       description: "Unwind on the remote, palm-shaded shores of Zanzibar. Experience Stone Town Spice trails, snorkeling reefs, and sunset dhow cruises.",
-      background: destinationsData.find(d => d.id === 'zanzibar')?.image || "",
+      background: destinations.find(d => d.id === 'zanzibar')?.image || undefined,
       badge: "Islands",
       badgeYear: "ZNZ",
       circlePackage: "Zanzibar Spice",
@@ -375,7 +571,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {destinationsData.slice(0, 3).map((dest) => (
+            {destinations.slice(0, 3).map((dest) => (
               <div 
                 key={dest.id}
                 className="group bg-[#FAF7F2] border border-[#EADCC9]/30 overflow-hidden flex flex-col h-full hover:shadow-xl transition-all duration-300"
@@ -426,37 +622,37 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
                 title: 'Wildlife & Safari',
                 desc: 'Experience Africa\'s incredible wildlife, tracking big cats and magnificent herds across legendary savannas.',
                 icon: <SafariIcon className="w-8 h-8 text-[#C5A880]" />,
-                img: destinationsData.find(d => d.id === 'kenya')?.image || ""
+                img: destinations.find(d => d.id === 'kenya')?.image || undefined
               },
               {
                 title: 'Beach Escapes',
                 desc: 'Relax along tropical coral coastlines and remote island properties washed by warm turquoise waters.',
                 icon: <Compass className="w-8 h-8 text-[#C5A880]" />,
-                img: destinationsData.find(d => d.id === 'zanzibar')?.image || ""
+                img: destinations.find(d => d.id === 'zanzibar')?.image || undefined
               },
               {
                 title: 'Culture & Heritage',
                 desc: 'Discover local Swahili traditions, elder storytelling, ancient stone cities, and living village history.',
                 icon: <Award className="w-8 h-8 text-[#C5A880]" />,
-                img: galleryData.find(g => g.id === '4')?.src || ""
+                img: galleryData.find(g => g.id === '4')?.src || undefined
               },
               {
                 title: 'Adventure Trekking',
                 desc: 'Explore high-altitude rainforest pathways, deep volcanic lakes, and climb majestic volcanic peaks.',
                 icon: <Tent className="w-8 h-8 text-[#C5A880]" />,
-                img: destinationsData.find(d => d.id === 'tanzania')?.image || ""
+                img: destinations.find(d => d.id === 'tanzania')?.image || undefined
               },
               {
                 title: 'Family Holidays',
                 desc: 'Create secure, highly educational, and deeply memorable shared experiences for family members of all ages.',
                 icon: <ShieldCheck className="w-8 h-8 text-[#C5A880]" />,
-                img: destinationsData.find(d => d.id === 'south-africa')?.image || ""
+                img: destinations.find(d => d.id === 'south-africa')?.image || undefined
               },
               {
                 title: 'Romantic Getaways',
                 desc: 'Cherish intimate moments under starry skies, secluded luxury camps, and candlelit savanna sunset dining.',
                 icon: <Heart className="w-8 h-8 text-[#C5A880]" />,
-                img: destinationsData.find(d => d.id === 'zanzibar')?.image || ""
+                img: destinations.find(d => d.id === 'zanzibar')?.image || undefined
               }
             ].map((exp, idx) => (
               <div 
@@ -563,7 +759,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {toursData.slice(0, 2).map((tour) => (
+            {tours.slice(0, 2).map((tour) => (
               <div 
                 key={tour.id}
                 className="group bg-white border border-[#EADCC9]/20 overflow-hidden flex flex-col md:flex-row hover:shadow-xl transition-shadow duration-300"
@@ -658,7 +854,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {blogData.slice(0, 3).map((post) => (
+            {blogs.slice(0, 3).map((post) => (
               <div 
                 key={post.id}
                 className="bg-white border border-[#EADCC9]/30 flex flex-col h-full hover:shadow-lg transition-shadow duration-300"
@@ -729,7 +925,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
       <section className="relative py-28 bg-[#1C2421] text-white text-center overflow-hidden border-t border-white/10">
         <div className="absolute inset-0 bg-black/40 z-10" />
         <img 
-          src={destinationsData.find(d => d.id === 'kenya')?.image || ""} 
+          src={destinations.find(d => d.id === 'kenya')?.image || undefined} 
           alt="Distant horizon safari view"
           onError={onImageError}
           className="absolute inset-0 w-full h-full object-cover transform scale-100 opacity-40"
@@ -760,14 +956,15 @@ function HomeView({ onNavigate, onImageError, setLightboxImage }: HomeViewProps)
 interface DestinationsViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
+  destinations: Destination[];
 }
 
-function DestinationsView({ onNavigate, onImageError }: DestinationsViewProps) {
+function DestinationsView({ onNavigate, onImageError, destinations }: DestinationsViewProps) {
   const [filterCategory, setFilterCategory] = useState('All');
 
   const categories = ['All', 'East Africa', 'Southern Africa', 'Beach Destinations', 'Wildlife Destinations'];
 
-  const filteredDests = destinationsData.filter(d => {
+  const filteredDests = destinations.filter(d => {
     if (filterCategory === 'All') return true;
     return d.category === filterCategory;
   });
@@ -847,11 +1044,25 @@ interface DestinationDetailViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
   setPlanSuccessData: (data: any) => void;
+  destinations: Destination[];
+  tours: Tour[];
 }
 
-function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessData }: DestinationDetailViewProps) {
-  const dest = destinationsData.find(d => d.id === id) || destinationsData[0];
-  const relatedToursList = toursData.filter(t => dest.relatedTours.includes(t.id));
+function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessData, destinations, tours }: DestinationDetailViewProps) {
+  const dest = destinations.find(d => d.id === id) || destinations[0];
+  if (!dest) {
+    return (
+      <div className="py-24 text-center select-none font-sans bg-[#FAF7F2]">
+        <div className="max-w-md mx-auto px-4">
+          <p className="text-stone-600 font-serif text-lg mb-4">Destination Not Found</p>
+          <button onClick={() => onNavigate('#/destinations')} className="text-xs uppercase tracking-widest font-bold text-[#C5A880] hover:underline">
+            Back to Destinations
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const relatedToursList = tours.filter(t => dest.relatedTours && dest.relatedTours.includes(t.id));
 
   // Quick enquiry states
   const [name, setName] = useState('');
@@ -1093,14 +1304,15 @@ function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessDat
 interface ToursViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
+  tours: Tour[];
 }
 
-function ToursView({ onNavigate, onImageError }: ToursViewProps) {
+function ToursView({ onNavigate, onImageError, tours }: ToursViewProps) {
   const [filterCategory, setFilterCategory] = useState('All');
 
   const categories = ['All', 'Wildlife', 'Beach', 'Adventure'];
 
-  const filteredTours = toursData.filter(t => {
+  const filteredTours = tours.filter(t => {
     if (filterCategory === 'All') return true;
     return t.category === filterCategory;
   });
@@ -1178,10 +1390,23 @@ interface TourDetailViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
   setPlanSuccessData: (data: any) => void;
+  tours: Tour[];
 }
 
-function TourDetailView({ id, onNavigate, onImageError, setPlanSuccessData }: TourDetailViewProps) {
-  const tour = toursData.find(t => t.id === id) || toursData[0];
+function TourDetailView({ id, onNavigate, onImageError, setPlanSuccessData, tours }: TourDetailViewProps) {
+  const tour = tours.find(t => t.id === id) || tours[0];
+  if (!tour) {
+    return (
+      <div className="py-24 text-center select-none font-sans bg-[#FAF7F2]">
+        <div className="max-w-md mx-auto px-4">
+          <p className="text-stone-600 font-serif text-lg mb-4">Itinerary Not Found</p>
+          <button onClick={() => onNavigate('#/tours')} className="text-xs uppercase tracking-widest font-bold text-[#C5A880] hover:underline">
+            Back to Tours
+          </button>
+        </div>
+      </div>
+    );
+  }
   const [activeDayIdx, setActiveDayIdx] = useState<number | null>(0);
 
   // Quick enquiry states
@@ -1388,7 +1613,7 @@ interface AboutViewProps {
 }
 
 function AboutView({ onNavigate, onImageError }: AboutViewProps) {
-  const culturePhoto = galleryData.find(g => g.id === '4')?.src || "";
+  const culturePhoto = galleryData.find(g => g.id === '4')?.src || undefined;
 
   return (
     <div className="py-16 fade-in select-text max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
@@ -1468,15 +1693,16 @@ function AboutView({ onNavigate, onImageError }: AboutViewProps) {
 interface GuideViewProps {
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
+  blogs: Article[];
 }
 
-function GuideView({ onNavigate, onImageError }: GuideViewProps) {
+function GuideView({ onNavigate, onImageError, blogs }: GuideViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCat, setFilterCat] = useState('All');
 
   const categories = ['All', 'Travel Tips', 'Safari'];
 
-  const filteredArticles = blogData.filter(art => {
+  const filteredArticles = blogs.filter(art => {
     const matchesSearch = art.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           art.excerpt.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCat = filterCat === 'All' || art.category === filterCat;
@@ -1572,13 +1798,27 @@ interface BlogDetailViewProps {
   id: string;
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
+  blogs: Article[];
+  destinations: Destination[];
 }
 
-function BlogDetailView({ id, onNavigate, onImageError }: BlogDetailViewProps) {
-  const article = blogData.find(b => b.id === id) || blogData[0];
-  const relatedList = blogData.filter(b => article.related.includes(b.id));
+function BlogDetailView({ id, onNavigate, onImageError, blogs, destinations }: BlogDetailViewProps) {
+  const article = blogs.find(b => b.id === id) || blogs[0];
+  if (!article) {
+    return (
+      <div className="py-24 text-center select-none font-sans bg-[#FAF7F2]">
+        <div className="max-w-md mx-auto px-4">
+          <p className="text-stone-600 font-serif text-lg mb-4">Article Not Found</p>
+          <button onClick={() => onNavigate('#/guide')} className="text-xs uppercase tracking-widest font-bold text-[#C5A880] hover:underline">
+            Back to Travel Guide
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const relatedList = blogs.filter(b => article.related && article.related.includes(b.id));
 
-  const blogFeaturedPhoto = destinationsData.find(d => d.id === 'kenya')?.image || "";
+  const blogFeaturedPhoto = destinations.find(d => d.id === 'kenya')?.image || undefined;
 
   return (
     <article className="py-16 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 fade-in select-text">
@@ -2295,3 +2535,1280 @@ function PlanView({ setPlanSuccessData, planSuccessData }: PlanViewProps) {
     </div>
   );
 }
+
+/* ============================================================================
+   VIEW COMPONENT: CONCIERGE ADMIN DASHBOARD
+   ============================================================================ */
+interface AdminDashboardViewProps {
+  enquiries: any[];
+  setEnquiries: React.Dispatch<React.SetStateAction<any[]>>;
+  destinations: Destination[];
+  setDestinations: React.Dispatch<React.SetStateAction<Destination[]>>;
+  tours: Tour[];
+  setTours: React.Dispatch<React.SetStateAction<Tour[]>>;
+  blogs: Article[];
+  setBlogs: React.Dispatch<React.SetStateAction<Article[]>>;
+  onNavigate: (hash: string) => void;
+  currentUser: User | null;
+  isAdminUser: boolean;
+}
+
+function AdminDashboardView({ 
+  enquiries, setEnquiries, 
+  destinations, setDestinations, 
+  tours, setTours, 
+  blogs, setBlogs, 
+  onNavigate,
+  currentUser,
+  isAdminUser
+}: AdminDashboardViewProps) {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('kagz_admin_session') === 'active');
+  const [passcode, setPasscode] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs'>('enquiries');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSeeding, setIsSeeding] = useState(false);
+  
+  // Selection / Editing States
+  const [selectedEnquiry, setSelectedEnquiry] = useState<any | null>(null);
+  const [filterStatus, setFilterStatus] = useState('All');
+  
+  const [editingDest, setEditingDest] = useState<any | null>(null);
+  const [editingTour, setEditingTour] = useState<any | null>(null);
+  const [editingBlog, setEditingBlog] = useState<any | null>(null);
+
+  // Authentication Gate
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passcode === 'kagz2026') {
+      setIsLoggedIn(true);
+      localStorage.setItem('kagz_admin_session', 'active');
+      setLoginError('');
+    } else {
+      setLoginError('Incorrect credentials. Please use passcode "kagz2026"');
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setLoginError('');
+      const user = await loginWithGoogle();
+      if (user.email !== 'kungutim541@gmail.com') {
+        setLoginError(`Authorized personnel only. "${user.email}" is not configured as an administrator.`);
+        await logoutUser();
+      }
+    } catch (err: any) {
+      setLoginError(err?.message || "Failed to authenticate with Google.");
+    }
+  };
+
+  const handleLogout = async () => {
+    setIsLoggedIn(false);
+    localStorage.removeItem('kagz_admin_session');
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error("Error logging out:", err);
+    }
+  };
+
+  // Status and Delete operations
+  const handleUpdateStatus = async (id: string, newStatus: string) => {
+    try {
+      await setDoc(doc(db, 'enquiries', id), { status: newStatus }, { merge: true });
+    } catch (err) {
+      console.error("Failed to update status in Firestore, updating locally:", err);
+    }
+    const updated = enquiries.map(e => e.id === id ? { ...e, status: newStatus } : e);
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    if (selectedEnquiry?.id === id) setSelectedEnquiry({ ...selectedEnquiry, status: newStatus });
+  };
+
+  const handleDeleteEnquiry = async (id: string) => {
+    if (confirm("Delete this curation enquiry?")) {
+      try {
+        await deleteDoc(doc(db, 'enquiries', id));
+      } catch (err) {
+        console.error("Failed to delete enquiry from Firestore, deleting locally:", err);
+      }
+      const updated = enquiries.filter(e => e.id !== id);
+      setEnquiries(updated);
+      localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+      setSelectedEnquiry(null);
+    }
+  };
+
+  // Reverts / Resets / Syncs
+  const handleReset = async (type: 'enquiries' | 'destinations' | 'tours' | 'blogs') => {
+    if (!confirm(`Reset ${type} on Firestore? This will overwrite manual changes with fresh default seeds.`)) return;
+    try {
+      if (type === 'enquiries') {
+        const seedEnquiries = [
+          {
+            id: 'enq-101',
+            name: 'Eleanor Vance',
+            email: 'eleanor.vance@londontravel.co.uk',
+            phone: '+44 7911 123456',
+            country: 'United Kingdom',
+            destination: 'Kenya',
+            travelDate: 'July 2027',
+            travelers: '2',
+            style: 'Classic Luxury Tented',
+            message: 'Interested in witnessing the Great Migration in Maasai Mara. We prefer private concessions to avoid crowds, and custom sundowners as mentioned in your brochure.',
+            status: 'Confirmed',
+            dateSubmitted: '2026-10-06'
+          },
+          {
+            id: 'enq-102',
+            name: 'Dr. Marcus Chen',
+            email: 'm.chen@stanford.edu',
+            phone: '+1 650 555 0192',
+            country: 'United States',
+            destination: 'Uganda & Rwanda',
+            travelDate: 'December 2026',
+            travelers: '1',
+            style: 'Active Adventure Trek',
+            message: 'Hoping to secure gorilla permits for Bwindi Impenetrable Forest and track chimpanzees in Kibale. Please arrange high-end eco-lodges with in-room fireplaces.',
+            status: 'Under Curation',
+            dateSubmitted: '2026-10-07'
+          }
+        ];
+        for (const item of seedEnquiries) {
+          await setDoc(doc(db, 'enquiries', item.id), item);
+        }
+      } else if (type === 'destinations') {
+        for (const item of destinationsData) {
+          await setDoc(doc(db, 'destinations', item.id), item);
+        }
+      } else if (type === 'tours') {
+        for (const item of toursData) {
+          await setDoc(doc(db, 'tours', item.id), item);
+        }
+      } else if (type === 'blogs') {
+        for (const item of blogData) {
+          await setDoc(doc(db, 'blogs', item.id), item);
+        }
+      }
+      alert(`Successfully reset ${type} on Firestore!`);
+    } catch (err) {
+      console.error(`Failed to reset ${type} on Firestore:`, err);
+      alert(`Failed to reset ${type} on Firestore: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleBulkSeed = async () => {
+    if (!confirm("Seed all default Destinations, Tours, and Blog articles to Firestore? This will populate your active live database!")) return;
+    setIsSeeding(true);
+    try {
+      for (const item of destinationsData) {
+        await setDoc(doc(db, 'destinations', item.id), item);
+      }
+      for (const item of toursData) {
+        await setDoc(doc(db, 'tours', item.id), item);
+      }
+      for (const item of blogData) {
+        await setDoc(doc(db, 'blogs', item.id), item);
+      }
+      const seedEnqs = [
+        {
+          id: 'enq-101',
+          name: 'Eleanor Vance',
+          email: 'eleanor.vance@londontravel.co.uk',
+          phone: '+44 7911 123456',
+          country: 'United Kingdom',
+          destination: 'Kenya',
+          travelDate: 'July 2027',
+          travelers: '2',
+          style: 'Classic Luxury Tented',
+          message: 'Interested in witnessing the Great Migration in Maasai Mara. We prefer private concessions to avoid crowds, and custom sundowners as mentioned in your brochure.',
+          status: 'Confirmed',
+          dateSubmitted: '2026-10-06'
+        },
+        {
+          id: 'enq-102',
+          name: 'Dr. Marcus Chen',
+          email: 'm.chen@stanford.edu',
+          phone: '+1 650 555 0192',
+          country: 'United States',
+          destination: 'Uganda & Rwanda',
+          travelDate: 'December 2026',
+          travelers: '1',
+          style: 'Active Adventure Trek',
+          message: 'Hoping to secure gorilla permits for Bwindi Impenetrable Forest and track chimpanzees in Kibale. Please arrange high-end eco-lodges with in-room fireplaces.',
+          status: 'Under Curation',
+          dateSubmitted: '2026-10-07'
+        }
+      ];
+      for (const item of seedEnqs) {
+        await setDoc(doc(db, 'enquiries', item.id), item);
+      }
+      alert("Successfully seeded all premium travel data and curation examples to Firestore!");
+    } catch (err) {
+      console.error("Bulk seeding failed:", err);
+      alert("Bulk seeding failed. Check console or security rules.");
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
+  // Save Operations
+  const handleSaveDest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDest.name) return;
+    const slug = editingDest.id || editingDest.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const data: Destination = {
+      ...editingDest,
+      id: slug,
+      whyVisit: typeof editingDest.whyVisit === 'string' ? editingDest.whyVisit.split('\n').map((s: string) => s.trim()).filter(Boolean) : (editingDest.whyVisit || []),
+      topExperiences: typeof editingDest.topExperiences === 'string' ? editingDest.topExperiences.split('\n').map((s: string) => s.trim()).filter(Boolean) : (editingDest.topExperiences || []),
+      attractions: typeof editingDest.attractions === 'string' ? editingDest.attractions.split(',').map((s: string) => s.trim()).filter(Boolean) : (editingDest.attractions || []),
+      relatedTours: Array.isArray(editingDest.relatedTours) ? editingDest.relatedTours : [],
+      faq: Array.isArray(editingDest.faq) ? editingDest.faq : []
+    };
+    
+    try {
+      await setDoc(doc(db, 'destinations', slug), data);
+    } catch (err) {
+      console.error("Failed to save destination to Firestore:", err);
+      alert("Firestore Permission Denied or validation error.");
+    }
+    const updated = destinations.some(d => d.id === slug) ? destinations.map(d => d.id === slug ? data : d) : [...destinations, data];
+    setDestinations(updated);
+    localStorage.setItem('kagz_destinations', JSON.stringify(updated));
+    setEditingDest(null);
+  };
+
+  const handleSaveTour = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTour.name) return;
+    const slug = editingTour.id || editingTour.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const data: Tour = {
+      ...editingTour,
+      id: slug,
+      destination: editingTour.destination || (destinations[0]?.name || 'Kenya'),
+      highlights: typeof editingTour.highlights === 'string' ? editingTour.highlights.split('\n').map((s: string) => s.trim()).filter(Boolean) : (editingTour.highlights || []),
+      whatToBring: typeof editingTour.whatToBring === 'string' ? editingTour.whatToBring.split('\n').map((s: string) => s.trim()).filter(Boolean) : (editingTour.whatToBring || []),
+      itinerary: Array.isArray(editingTour.itinerary) ? editingTour.itinerary : [],
+      faq: Array.isArray(editingTour.faq) ? editingTour.faq : []
+    };
+    
+    try {
+      await setDoc(doc(db, 'tours', slug), data);
+    } catch (err) {
+      console.error("Failed to save tour to Firestore:", err);
+      alert("Firestore Permission Denied or validation error.");
+    }
+    const updated = tours.some(t => t.id === slug) ? tours.map(t => t.id === slug ? data : t) : [...tours, data];
+    setTours(updated);
+    localStorage.setItem('kagz_tours', JSON.stringify(updated));
+    setEditingTour(null);
+  };
+
+  const handleSaveBlog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBlog.title) return;
+    const slug = editingBlog.id || editingBlog.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const data: Article = {
+      ...editingBlog,
+      id: slug,
+      author: editingBlog.author || 'Amara Kagz',
+      date: editingBlog.date || new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      related: typeof editingBlog.related === 'string' ? editingBlog.related.split(',').map((s: string) => s.trim()).filter(Boolean) : (editingBlog.related || [])
+    };
+    
+    try {
+      await setDoc(doc(db, 'blogs', slug), data);
+    } catch (err) {
+      console.error("Failed to save article to Firestore:", err);
+      alert("Firestore Permission Denied or validation error.");
+    }
+    const updated = blogs.some(b => b.id === slug) ? blogs.map(b => b.id === slug ? data : b) : [...blogs, data];
+    setBlogs(updated);
+    localStorage.setItem('kagz_blogs', JSON.stringify(updated));
+    setEditingBlog(null);
+  };
+
+  // Delete Content Item
+  const handleDeleteContent = async (type: 'dest' | 'tour' | 'blog', id: string) => {
+    if (!confirm(`Are you sure you want to delete this ${type === 'dest' ? 'destination' : type === 'tour' ? 'tour' : 'article'}?`)) return;
+    try {
+      if (type === 'dest') {
+        await deleteDoc(doc(db, 'destinations', id));
+        const updated = destinations.filter(d => d.id !== id);
+        setDestinations(updated);
+        localStorage.setItem('kagz_destinations', JSON.stringify(updated));
+      } else if (type === 'tour') {
+        await deleteDoc(doc(db, 'tours', id));
+        const updated = tours.filter(t => t.id !== id);
+        setTours(updated);
+        localStorage.setItem('kagz_tours', JSON.stringify(updated));
+      } else if (type === 'blog') {
+        await deleteDoc(doc(db, 'blogs', id));
+        const updated = blogs.filter(b => b.id !== id);
+        setBlogs(updated);
+        localStorage.setItem('kagz_blogs', JSON.stringify(updated));
+      }
+    } catch (err) {
+      console.error("Failed to delete content from Firestore:", err);
+      alert("Firestore Permission Denied or connection error.");
+    }
+  };
+
+  const isStaffAuthenticated = isLoggedIn || isAdminUser;
+
+  if (!isStaffAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#1C2421] flex items-center justify-center px-4 py-12 select-none font-sans">
+        <div className="max-w-md w-full bg-white border border-[#EADCC9]/30 p-8 md:p-10 shadow-2xl text-center">
+          <div className="inline-flex p-4 bg-[#FAF7F2] rounded-full mb-6">
+            <Lock className="w-10 h-10 text-[#C5A880]" />
+          </div>
+          <h1 className="font-serif text-3xl font-bold text-[#1C2421] mb-2">KAGZ Concierge Portal</h1>
+          <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6">Internal CMS Gatekeeper</p>
+          
+          {/* Production-grade Google Authentication */}
+          <div className="mb-8 pb-6 border-b border-stone-150">
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              className="w-full py-3.5 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-800 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
+                <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
+                <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
+                <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
+              </svg>
+              <span>Sign in with Google</span>
+            </button>
+            <p className="text-[10px] text-stone-400 mt-2 font-mono">Authorized Administrator: kungutim541@gmail.com</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4 text-left">
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-stone-500 tracking-widest mb-1.5">Or Enter Passcode Gate</label>
+              <input
+                type="password"
+                required
+                placeholder="••••••••"
+                value={passcode}
+                onChange={(e) => setPasscode(e.target.value)}
+                className="w-full bg-[#FAF7F2] border border-stone-200 px-4 py-3 text-sm focus:outline-none focus:border-[#C5A880] rounded-none text-stone-950 font-mono text-center tracking-widest"
+              />
+            </div>
+            {loginError && <p className="text-rose-600 text-xs font-semibold">{loginError}</p>}
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-widest transition-all shadow-md rounded-full cursor-pointer"
+            >
+              Authenticate with Passcode &rarr;
+            </button>
+          </form>
+          <button 
+            onClick={() => onNavigate('#/')}
+            className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer"
+          >
+            &larr; Return to Visitor Site
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Filter lists based on search
+  const filteredEnquiries = enquiries.filter(enq => {
+    const matchesStatus = filterStatus === 'All' || enq.status === filterStatus;
+    const matchesSearch = !searchQuery || [enq.name, enq.email, enq.destination, enq.message].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesStatus && matchesSearch;
+  });
+
+  const filteredDests = destinations.filter(d => !searchQuery || [d.name, d.tagline, d.category].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase())));
+  const filteredTours = tours.filter(t => !searchQuery || [t.name, t.destination, t.category].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase())));
+  const filteredBlogs = blogs.filter(b => !searchQuery || [b.title, b.category, b.author].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase())));
+
+  return (
+    <div className="bg-[#FAF7F2] min-h-screen text-stone-800 font-sans select-text">
+      {/* Dynamic Header */}
+      <header className="bg-[#1C2421] text-white py-4 px-6 md:px-8 border-b border-white/10 sticky top-0 z-40 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="flex items-center gap-2">
+          <Sliders className="w-5 h-5 text-[#C5A880]" />
+          <h1 className="font-serif text-xl font-bold tracking-wider">KAGZ Concierge Portal</h1>
+          <span className="bg-stone-800 text-[9px] text-[#C5A880] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full border border-stone-700 select-none">Staff CMS</span>
+          {auth.currentUser?.email && (
+            <span className="text-[10px] text-stone-400 font-mono hidden md:inline ml-2 border-l border-stone-800 pl-2">
+              Signed in as {auth.currentUser.email}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleBulkSeed}
+            disabled={isSeeding}
+            className={`text-xs px-3 py-1 bg-[#C5A880]/15 border border-[#C5A880]/40 text-[#C5A880] hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider rounded-full transition-all cursor-pointer flex items-center gap-1.5 ${isSeeding ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>{isSeeding ? "Seeding..." : "Seed Firestore"}</span>
+          </button>
+          <span className="text-white/20">|</span>
+          <button
+            onClick={() => onNavigate('#/')}
+            className="text-xs hover:text-[#C5A880] flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Globe className="w-4 h-4" />
+            <span>Live Site</span>
+          </button>
+          <span className="text-white/20">|</span>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-[#C5A880] hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Logout</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Core split */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Portal Tabs Bar */}
+        <div className="flex flex-wrap gap-2 mb-8 border-b border-stone-200 pb-4 select-none">
+          {[
+            { id: 'enquiries', label: 'Enquiries Log', icon: <FileText className="w-4 h-4" /> },
+            { id: 'destinations', label: 'Destinations', icon: <MapPin className="w-4 h-4" /> },
+            { id: 'tours', label: 'Experiences & Tours', icon: <Compass className="w-4 h-4" /> },
+            { id: 'blogs', label: 'Travel Guides', icon: <BookOpen className="w-4 h-4" /> }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setActiveTab(tab.id as any);
+                setSearchQuery('');
+                setSelectedEnquiry(null);
+                setEditingDest(null);
+                setEditingTour(null);
+                setEditingBlog(null);
+              }}
+              className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all rounded-none border ${
+                activeTab === tab.id
+                  ? 'bg-[#1C2421] text-[#C5A880] border-[#1C2421]'
+                  : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+              } cursor-pointer`}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Global Toolbar */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 border border-stone-200 shadow-sm mb-6">
+          <div className="relative w-full md:w-80">
+            <input
+              type="text"
+              placeholder={`Search ${activeTab}...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-[#FAF7F2] border border-stone-200 pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 placeholder-stone-400"
+            />
+            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handleReset(activeTab)}
+              className="px-3.5 py-2 border border-stone-200 text-stone-500 hover:text-stone-900 hover:bg-stone-50 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reset defaults</span>
+            </button>
+
+            {activeTab === 'destinations' && (
+              <button
+                onClick={() => setEditingDest({ name: '', tagline: '', category: 'East Africa', image: '', intro: '', whyVisit: '', topExperiences: '', attractions: '', bestTimeToVisit: '', travelTips: '' })}
+                className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Destination</span>
+              </button>
+            )}
+            {activeTab === 'tours' && (
+              <button
+                onClick={() => setEditingTour({ name: '', destination: destinations[0]?.name || 'Kenya', category: 'Wildlife', duration: '', image: '', description: '', overview: '', highlights: '', whatToExpect: '', bestTimeToGo: '', whatToBring: '', itinerary: [] })}
+                className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Experience</span>
+              </button>
+            )}
+            {activeTab === 'blogs' && (
+              <button
+                onClick={() => setEditingBlog({ title: '', category: 'Travel Tips', date: '', excerpt: '', content: '', author: 'Amara Kagz', metaDescription: '', related: '' })}
+                className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Guide</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB: ENQUIRIES */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'enquiries' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-4">
+              <div className="flex gap-2 mb-4 select-none">
+                {['All', 'New Enquiry', 'Under Curation', 'Confirmed'].map(st => (
+                  <button
+                    key={st}
+                    onClick={() => setFilterStatus(st)}
+                    className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer rounded-full border ${
+                      filterStatus === st ? 'bg-[#C5A880] text-white border-transparent' : 'bg-white text-stone-600 border-stone-200'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+
+              {filteredEnquiries.length > 0 ? (
+                <div className="bg-white border border-stone-200 shadow-sm divide-y divide-stone-100">
+                  {filteredEnquiries.map(enq => (
+                    <div
+                      key={enq.id}
+                      onClick={() => setSelectedEnquiry(enq)}
+                      className={`p-5 hover:bg-[#FAF7F2] transition-colors cursor-pointer flex justify-between items-center gap-4 ${
+                        selectedEnquiry?.id === enq.id ? 'bg-[#FAF7F2] border-l-4 border-[#C5A880]' : ''
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-serif font-bold text-stone-900">{enq.name}</h3>
+                          <span className={`text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                            enq.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' :
+                            enq.status === 'Under Curation' ? 'bg-amber-100 text-amber-800' : 'bg-orange-100 text-orange-800'
+                          }`}>{enq.status}</span>
+                        </div>
+                        <p className="text-xs text-stone-500 font-medium">{enq.destination} &bull; {enq.travelDate} &bull; {enq.travelers} guests</p>
+                        <p className="text-xs text-stone-600 italic line-clamp-1 mt-1">"{enq.message}"</p>
+                      </div>
+                      <div className="text-right text-[10px] text-stone-400 select-none">{enq.dateSubmitted}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-white p-12 text-center text-stone-400 italic border border-stone-200">No enquiries found matching selections.</div>
+              )}
+            </div>
+
+            <div className="lg:col-span-1">
+              {selectedEnquiry ? (
+                <div className="bg-white border border-stone-200 p-6 shadow-sm sticky top-28 space-y-5 text-xs">
+                  <div className="flex justify-between items-start border-b border-stone-100 pb-3">
+                    <div>
+                      <span className="text-[9px] uppercase tracking-widest text-stone-400 font-bold">Traveller Lead</span>
+                      <h2 className="font-serif text-xl font-bold text-stone-900 mt-1">{selectedEnquiry.name}</h2>
+                    </div>
+                    <button onClick={() => setSelectedEnquiry(null)} className="text-stone-400 hover:text-stone-700"><X className="w-4 h-4" /></button>
+                  </div>
+
+                  <div className="space-y-3.5">
+                    <div>
+                      <p className="text-[9px] uppercase font-bold text-stone-400">Destination</p>
+                      <p className="text-sm font-bold text-stone-900 font-serif">{selectedEnquiry.destination}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-[9px] uppercase font-bold text-stone-400">Travel Date</p>
+                        <p className="font-semibold text-stone-800">{selectedEnquiry.travelDate}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase font-bold text-stone-400">Guests</p>
+                        <p className="font-semibold text-stone-800">{selectedEnquiry.travelers} Guests</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase font-bold text-stone-400">Contact</p>
+                      <p className="font-semibold text-stone-850">{selectedEnquiry.email} &bull; {selectedEnquiry.phone}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase font-bold text-stone-400">Origin / Country</p>
+                      <p className="font-semibold text-stone-800">{selectedEnquiry.country || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase font-bold text-stone-400">Style Preference</p>
+                      <p className="font-semibold text-stone-800">{selectedEnquiry.style || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] uppercase font-bold text-stone-400">Curation Request Notes</p>
+                      <div className="bg-[#FAF7F2] p-3 border border-stone-100 italic text-stone-600 mt-1 leading-relaxed">"{selectedEnquiry.message}"</div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-stone-100 pt-5 space-y-3">
+                    <p className="text-[9px] uppercase tracking-wider text-[#C5A880] font-bold">Concierge Actions</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => handleUpdateStatus(selectedEnquiry.id, 'Under Curation')}
+                        disabled={selectedEnquiry.status === 'Under Curation'}
+                        className="py-2 bg-stone-50 hover:bg-amber-50 text-[#1C2421] border border-stone-200 text-[10px] font-bold uppercase rounded-none cursor-pointer"
+                      >
+                        Start Curation
+                      </button>
+                      <button
+                        onClick={() => handleUpdateStatus(selectedEnquiry.id, 'Confirmed')}
+                        disabled={selectedEnquiry.status === 'Confirmed'}
+                        className="py-2 bg-[#C5A880] hover:bg-[#1C2421] hover:text-white text-[#1C2421] text-[10px] font-bold uppercase rounded-none cursor-pointer"
+                      >
+                        Confirm
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteEnquiry(selectedEnquiry.id)}
+                      className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[10px] font-bold uppercase tracking-wider border border-rose-100 cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Enquiry</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white border border-stone-200 p-8 text-center text-stone-400 italic shadow-sm h-72 flex flex-col justify-center items-center select-none">
+                  <FileText className="w-8 h-8 text-stone-300 mb-2" />
+                  <p className="text-xs max-w-[200px]">Select any enquiry lead from the list to inspect traveler details.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB: DESTINATIONS */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'destinations' && (
+          <div>
+            {editingDest ? (
+              <form onSubmit={handleSaveDest} className="bg-white border border-stone-200 p-6 md:p-8 shadow-sm space-y-5 max-w-3xl mx-auto text-xs">
+                <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+                  <h2 className="font-serif text-xl font-bold text-stone-900">{editingDest.id ? `Edit Destination: ${editingDest.name}` : 'Add New Destination'}</h2>
+                  <button type="button" onClick={() => setEditingDest(null)} className="text-stone-400 hover:text-stone-700"><X className="w-4 h-4" /></button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Destination Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Kenya"
+                      value={editingDest.name}
+                      onChange={(e) => setEditingDest({ ...editingDest, name: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Tagline</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. The Cradle of Safari & Wilderness"
+                      value={editingDest.tagline}
+                      onChange={(e) => setEditingDest({ ...editingDest, tagline: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Category</label>
+                    <select
+                      value={editingDest.category}
+                      onChange={(e) => setEditingDest({ ...editingDest, category: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    >
+                      <option value="East Africa">East Africa</option>
+                      <option value="Southern Africa">Southern Africa</option>
+                      <option value="Wildlife Destinations">Wildlife Destinations</option>
+                      <option value="Beach Destinations">Beach Destinations</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Best Time to Visit</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. July to October"
+                      value={editingDest.bestTimeToVisit}
+                      onChange={(e) => setEditingDest({ ...editingDest, bestTimeToVisit: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Featured Image URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://images.unsplash.com/photo-..."
+                    value={editingDest.image}
+                    onChange={(e) => setEditingDest({ ...editingDest, image: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Introduction Intro *</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide a stunning premium description..."
+                    value={editingDest.intro}
+                    onChange={(e) => setEditingDest({ ...editingDest, intro: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Why Visit (one point per line)</label>
+                    <textarea
+                      rows={4}
+                      placeholder="Witness migration&#10;Track rare black rhino"
+                      value={Array.isArray(editingDest.whyVisit) ? editingDest.whyVisit.join('\n') : (editingDest.whyVisit || '')}
+                      onChange={(e) => setEditingDest({ ...editingDest, whyVisit: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Top Experiences (one per line)</label>
+                    <textarea
+                      rows={4}
+                      placeholder="Sunrise hot air balloon flight&#10;Private sundowner sunset dinner"
+                      value={Array.isArray(editingDest.topExperiences) ? editingDest.topExperiences.join('\n') : (editingDest.topExperiences || '')}
+                      onChange={(e) => setEditingDest({ ...editingDest, topExperiences: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Top Attractions (comma separated)</label>
+                    <input
+                      type="text"
+                      placeholder="Maasai Mara, Amboseli, Diani Beach"
+                      value={Array.isArray(editingDest.attractions) ? editingDest.attractions.join(', ') : (editingDest.attractions || '')}
+                      onChange={(e) => setEditingDest({ ...editingDest, attractions: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Travel Tips Summary</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Bring light earth-toned clothing."
+                      value={editingDest.travelTips}
+                      onChange={(e) => setEditingDest({ ...editingDest, travelTips: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingDest(null)}
+                    className="px-5 py-2.5 border border-stone-300 text-stone-700 hover:bg-stone-50 font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-7 py-2.5 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Save Destination
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredDests.map(d => (
+                  <div key={d.id} className="bg-white border border-stone-200 shadow-sm flex flex-col">
+                    <img
+                      src={d.image}
+                      alt={d.name}
+                      className="h-44 w-full object-cover"
+                      onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546182990-dffeafbe841d?auto=format&fit=crop&w=1200&q=80'; }}
+                    />
+                    <div className="p-5 flex-grow flex flex-col justify-between space-y-4">
+                      <div>
+                        <div className="flex justify-between items-start gap-2 mb-1.5">
+                          <h3 className="font-serif text-lg font-bold text-stone-900">{d.name}</h3>
+                          <span className="bg-stone-100 text-stone-600 font-bold text-[8px] uppercase tracking-widest px-2 py-0.5 rounded-full">{d.category}</span>
+                        </div>
+                        <p className="text-xs text-[#C5A880] italic font-semibold line-clamp-1">{d.tagline}</p>
+                        <p className="text-xs text-stone-500 line-clamp-2 mt-2 leading-relaxed">{d.intro}</p>
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t border-stone-100 justify-between items-center select-none">
+                        <span className="text-[10px] text-stone-400 font-mono">ID: {d.id}</span>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => setEditingDest(d)}
+                            className="p-1.5 text-stone-600 hover:text-[#C5A880] hover:bg-stone-50 transition-all cursor-pointer"
+                            title="Edit"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteContent('dest', d.id)}
+                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-stone-50 transition-all cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB: TOURS & EXPERIENCES */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'tours' && (
+          <div>
+            {editingTour ? (
+              <form onSubmit={handleSaveTour} className="bg-white border border-stone-200 p-6 md:p-8 shadow-sm space-y-5 max-w-3xl mx-auto text-xs">
+                <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+                  <h2 className="font-serif text-xl font-bold text-stone-900">{editingTour.id ? `Edit Tour: ${editingTour.name}` : 'Add New Experience'}</h2>
+                  <button type="button" onClick={() => setEditingTour(null)} className="text-stone-400 hover:text-stone-700"><X className="w-4 h-4" /></button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Experience Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Amboseli Elephant Odyssey"
+                      value={editingTour.name}
+                      onChange={(e) => setEditingTour({ ...editingTour, name: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Target Country / Destination</label>
+                    <select
+                      value={editingTour.destination}
+                      onChange={(e) => setEditingTour({ ...editingTour, destination: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 cursor-pointer"
+                    >
+                      {destinations.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Category</label>
+                    <select
+                      value={editingTour.category}
+                      onChange={(e) => setEditingTour({ ...editingTour, category: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 cursor-pointer"
+                    >
+                      <option value="Wildlife">Wildlife & Safari</option>
+                      <option value="Beach">Beach Sanctuary</option>
+                      <option value="Adventure">Active Adventure</option>
+                      <option value="Culture">Swahili Culture</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Duration text</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 5 Days / 4 Nights"
+                      value={editingTour.duration}
+                      onChange={(e) => setEditingTour({ ...editingTour, duration: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Best Time to Go</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. December to March"
+                      value={editingTour.bestTimeToGo}
+                      onChange={(e) => setEditingTour({ ...editingTour, bestTimeToGo: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Experience Cover Image URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://images.unsplash.com/photo-..."
+                    value={editingTour.image}
+                    onChange={(e) => setEditingTour({ ...editingTour, image: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Brief Description (Intro snippet) *</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Provide a stunning short intro snippet..."
+                    value={editingTour.description}
+                    onChange={(e) => setEditingTour({ ...editingTour, description: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Deep Overview paragraph</label>
+                  <textarea
+                    rows={4}
+                    placeholder="Detailed overview for the experience detail page..."
+                    value={editingTour.overview}
+                    onChange={(e) => setEditingTour({ ...editingTour, overview: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Highlights (one per line)</label>
+                    <textarea
+                      rows={4}
+                      placeholder="Exclusive private 4x4 vehicles&#10;Sunset cocktails over Amboseli"
+                      value={Array.isArray(editingTour.highlights) ? editingTour.highlights.join('\n') : (editingTour.highlights || '')}
+                      onChange={(e) => setEditingTour({ ...editingTour, highlights: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">What to Bring (one per line)</label>
+                    <textarea
+                      rows={4}
+                      placeholder="Neutral earth toned garments&#10;Telephoto lens DSLR camera"
+                      value={Array.isArray(editingTour.whatToBring) ? editingTour.whatToBring.join('\n') : (editingTour.whatToBring || '')}
+                      onChange={(e) => setEditingTour({ ...editingTour, whatToBring: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">What to Expect summary</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Complete high-end luxury lodgings, gourmet dinners, and expert tracker services."
+                    value={editingTour.whatToExpect}
+                    onChange={(e) => setEditingTour({ ...editingTour, whatToExpect: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                  />
+                </div>
+
+                {/* Highly Compact dynamic Day Itinerary list */}
+                <div className="bg-[#FAF7F2] p-4 border border-stone-200">
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#C5A880] mb-2">Itinerary Program Days ({editingTour.itinerary?.length || 0})</h3>
+                  {editingTour.itinerary && editingTour.itinerary.length > 0 && (
+                    <div className="space-y-2 mb-3 bg-white p-3 border border-stone-100 max-h-40 overflow-y-auto">
+                      {editingTour.itinerary.map((it: any, index: number) => (
+                        <div key={index} className="flex justify-between items-center bg-[#FAF7F2] p-2 text-[10px]">
+                          <div>
+                            <span className="font-bold text-[#1C2421]">{it.day}: {it.title}</span>
+                            <p className="text-stone-500 mt-0.5 line-clamp-1">{it.desc}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = editingTour.itinerary.filter((_: any, i: number) => i !== index);
+                              setEditingTour({ ...editingTour, itinerary: updated });
+                            }}
+                            className="text-rose-600 font-bold hover:underline ml-2"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      id="it-day"
+                      type="text"
+                      placeholder="e.g. Day 1"
+                      className="bg-white border border-stone-200 p-2 text-[10px] focus:outline-none"
+                    />
+                    <input
+                      id="it-title"
+                      type="text"
+                      placeholder="e.g. Welcome Sundowners"
+                      className="bg-white border border-stone-200 p-2 text-[10px] focus:outline-none sm:col-span-2"
+                    />
+                  </div>
+                  <textarea
+                    id="it-desc"
+                    rows={2}
+                    placeholder="e.g. Fly via bush airplane to local conservancy..."
+                    className="bg-white border border-stone-200 p-2 text-[10px] focus:outline-none w-full mt-2"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const dayInput = document.getElementById('it-day') as HTMLInputElement;
+                      const titleInput = document.getElementById('it-title') as HTMLInputElement;
+                      const descInput = document.getElementById('it-desc') as HTMLTextAreaElement;
+                      if (dayInput.value.trim() && titleInput.value.trim()) {
+                        const newItinerary = [...(editingTour.itinerary || []), { day: dayInput.value.trim(), title: titleInput.value.trim(), desc: descInput.value.trim() }];
+                        setEditingTour({ ...editingTour, itinerary: newItinerary });
+                        dayInput.value = '';
+                        titleInput.value = '';
+                        descInput.value = '';
+                      } else {
+                        alert('Please fill Day and Title fields to add itinerary day.');
+                      }
+                    }}
+                    className="mt-2.5 px-4 py-1.5 bg-[#1C2421] hover:bg-[#C5A880] text-white hover:text-[#1C2421] text-[10px] uppercase font-bold"
+                  >
+                    + Add Day to Program
+                  </button>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTour(null)}
+                    className="px-5 py-2.5 border border-stone-300 text-stone-700 hover:bg-stone-50 font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-7 py-2.5 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Save Experience
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredTours.map(t => (
+                  <div key={t.id} className="bg-white border border-stone-200 shadow-sm flex flex-col">
+                    <img
+                      src={t.image}
+                      alt={t.name}
+                      className="h-44 w-full object-cover"
+                      onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546182990-dffeafbe841d?auto=format&fit=crop&w=1200&q=80'; }}
+                    />
+                    <div className="p-5 flex-grow flex flex-col justify-between space-y-4">
+                      <div>
+                        <div className="flex justify-between items-start gap-2 mb-1">
+                          <h3 className="font-serif text-lg font-bold text-stone-900 line-clamp-1">{t.name}</h3>
+                          <span className="bg-[#C5A880]/10 text-[#C5A880] font-bold text-[8px] uppercase tracking-widest px-2.5 py-0.5 rounded-full shrink-0">{t.category}</span>
+                        </div>
+                        <p className="text-xs text-stone-500 font-semibold mb-2">{t.destination} &bull; {t.duration}</p>
+                        <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed">{t.description}</p>
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t border-stone-100 justify-between items-center select-none">
+                        <span className="text-[10px] text-stone-400 font-mono">ID: {t.id}</span>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => setEditingTour(t)}
+                            className="p-1.5 text-stone-600 hover:text-[#C5A880] hover:bg-stone-50 transition-all cursor-pointer"
+                            title="Edit"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteContent('tour', t.id)}
+                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-stone-50 transition-all cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB: BLOGS & GUIDES */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'blogs' && (
+          <div>
+            {editingBlog ? (
+              <form onSubmit={handleSaveBlog} className="bg-white border border-stone-200 p-6 md:p-8 shadow-sm space-y-5 max-w-3xl mx-auto text-xs">
+                <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+                  <h2 className="font-serif text-xl font-bold text-stone-900">{editingBlog.id ? `Edit Guide: ${editingBlog.title}` : 'Add New Article'}</h2>
+                  <button type="button" onClick={() => setEditingBlog(null)} className="text-stone-400 hover:text-stone-700"><X className="w-4 h-4" /></button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Article Title *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Unveiling the Wild Secrets of the Ngorongoro Crater"
+                      value={editingBlog.title}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, title: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Category</label>
+                    <select
+                      value={editingBlog.category}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, category: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 cursor-pointer"
+                    >
+                      <option value="Travel Tips">Travel Tips</option>
+                      <option value="Safari">Safari Expedition</option>
+                      <option value="Culture">Swahili Culture</option>
+                      <option value="Wildlife">Wildlife Guides</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Author Name</label>
+                    <input
+                      type="text"
+                      placeholder="Amara Kagz"
+                      value={editingBlog.author}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, author: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Custom date</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. October 2026"
+                      value={editingBlog.date}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, date: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Excerpt (Quick summary block) *</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Short summary excerpt shown on guide directories..."
+                    value={editingBlog.excerpt}
+                    onChange={(e) => setEditingBlog({ ...editingBlog, excerpt: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Content Article Body (Text) *</label>
+                  <textarea
+                    rows={10}
+                    placeholder="Provide the complete markdown/text body for the travel guide article..."
+                    value={editingBlog.content}
+                    onChange={(e) => setEditingBlog({ ...editingBlog, content: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 font-sans leading-relaxed text-sm"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Meta Description (SEO)</label>
+                    <input
+                      type="text"
+                      placeholder="Expert travel guidelines for..."
+                      value={editingBlog.metaDescription}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, metaDescription: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Related article slugs (comma separated)</label>
+                    <input
+                      type="text"
+                      placeholder="top-safari-destinations, safari-packing-guide"
+                      value={Array.isArray(editingBlog.related) ? editingBlog.related.join(', ') : (editingBlog.related || '')}
+                      onChange={(e) => setEditingBlog({ ...editingBlog, related: e.target.value })}
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingBlog(null)}
+                    className="px-5 py-2.5 border border-stone-300 text-stone-700 hover:bg-stone-50 font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-7 py-2.5 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold uppercase rounded-full cursor-pointer"
+                  >
+                    Save Article
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {filteredBlogs.map(b => (
+                  <div key={b.id} className="bg-white border border-stone-200 shadow-sm p-6 flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-[#C5A880] bg-stone-50 px-2 py-0.5 rounded-none border border-stone-100 shrink-0">{b.category}</span>
+                        <span className="text-[10px] text-stone-400 font-medium select-none">{b.date}</span>
+                      </div>
+                      <h3 className="font-serif text-lg font-bold text-stone-900 leading-snug">{b.title}</h3>
+                      <p className="text-xs text-stone-500 font-semibold mb-2">By {b.author}</p>
+                      <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed mt-1">{b.excerpt}</p>
+                    </div>
+                    <div className="flex gap-2 pt-3 border-t border-stone-100 justify-between items-center select-none">
+                      <span className="text-[10px] text-stone-400 font-mono">Slug: {b.id}</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => setEditingBlog(b)}
+                          className="p-1.5 text-stone-600 hover:text-[#C5A880] hover:bg-stone-50 transition-all cursor-pointer"
+                          title="Edit"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteContent('blog', b.id)}
+                          className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-stone-50 transition-all cursor-pointer"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
