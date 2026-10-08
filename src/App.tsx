@@ -246,7 +246,13 @@ export default function App() {
 
   // Extract Route Path and IDs
   const parseRoute = () => {
-    const hash = currentHash || '#/';
+    let hash = currentHash || '#/';
+    
+    // Normalize trailing slash (e.g. '#/admin/' -> '#/admin', except for exactly '#/')
+    if (hash.endsWith('/') && hash.length > 3) {
+      hash = hash.slice(0, -1);
+    }
+
     if (hash === '#/' || hash === '') return { page: 'home', id: null };
     
     if (hash.startsWith('#/destinations/')) {
