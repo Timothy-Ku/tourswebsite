@@ -152,5 +152,32 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isSignedIn();
     }
+
+    // Testimonials collection rules
+    match /testimonials/{testId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Gallery collection rules
+    match /gallery/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Special offers collection rules
+    match /offers/{offerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Staff directory and audit log rules
+    match /staff/{staffId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
   }
 }
