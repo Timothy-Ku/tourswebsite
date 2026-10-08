@@ -59,12 +59,11 @@ import {
   db, 
   auth, 
   loginWithGoogle, 
-  loginWithGoogleCredential,
   logoutUser, 
   handleFirestoreError, 
   OperationType 
 } from './firebase';
-import { onAuthStateChanged, User, isSignInWithEmailLink, signInWithEmailLink, sendSignInLinkToEmail } from 'firebase/auth';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
   collection, 
   doc, 
@@ -91,123 +90,7 @@ export default function App() {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
-  // Dynamic Sandbox URL state
-  const [sandboxUrl, setSandboxUrl] = useState('https://ais-dev-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app');
-
-  // Fetch active sandbox URL from Firestore on mount so we don't rely on hardcoded old values
-  useEffect(() => {
-    const fetchSandboxUrl = async () => {
-      try {
-        const { getDoc, doc } = await import('firebase/firestore');
-        const docSnap = await getDoc(doc(db, 'config', 'sandbox'));
-        if (docSnap.exists() && docSnap.data().url) {
-          console.log("Fetched active sandbox URL from Firestore config:", docSnap.data().url);
-          setSandboxUrl(docSnap.data().url);
-        }
-      } catch (err) {
-        console.warn("Could not fetch sandbox URL config from Firestore, using default fallback:", err);
-      }
-    };
-    fetchSandboxUrl();
-  }, []);
-
-  // Auto-save active sandbox URL to Firestore when admin is logged in on sandbox
-  useEffect(() => {
-    if (isAdminUser && (window.location.hostname.endsWith('run.app') || window.location.hostname === 'localhost')) {
-      const saveSandboxUrl = async () => {
-        try {
-          const { setDoc, doc } = await import('firebase/firestore');
-          await setDoc(doc(db, 'config', 'sandbox'), { url: window.location.origin }, { merge: true });
-          console.log("Auto-saved active sandbox URL config in Firestore:", window.location.origin);
-          setSandboxUrl(window.location.origin);
-        } catch (err) {
-          console.error("Failed to auto-save sandbox URL config:", err);
-        }
-      };
-      saveSandboxUrl();
-    }
-  }, [isAdminUser]);
-
-  // Handle incoming secure session token (from Sandbox Redirect Helper) on mount
-  useEffect(() => {
-    const handleAuthToken = async () => {
-      try {
-        const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
-        const authToken = params.get('auth_token');
-        if (authToken) {
-          setIsAuthChecking(true);
-          console.log("Detecting secure session token, authenticating...");
-          await loginWithGoogleCredential(authToken);
-          
-          // Clean URL parameters to keep address bar pristine
-          const currentUrl = new URL(window.location.href);
-          currentUrl.searchParams.delete('auth_token');
-          if (window.location.hash.includes('auth_token')) {
-            const hashParts = window.location.hash.split('?');
-            if (hashParts[1]) {
-              const hashParams = new URLSearchParams(hashParts[1]);
-              hashParams.delete('auth_token');
-              const newHashParams = hashParams.toString();
-              window.location.hash = hashParts[0] + (newHashParams ? '?' + newHashParams : '');
-            }
-          }
-          window.history.replaceState({}, document.title, currentUrl.pathname + currentUrl.search);
-          console.log("Successfully logged in via secure token!");
-        }
-      } catch (err) {
-        console.error("Failed to authenticate secure session token:", err);
-      } finally {
-        setIsAuthChecking(false);
-      }
-    };
-    handleAuthToken();
-  }, []);
-
-  // Handle incoming email magic link sign-in on mount
-  useEffect(() => {
-    const handleEmailLinkSignIn = async () => {
-      try {
-        if (isSignInWithEmailLink(auth, window.location.href)) {
-          setIsAuthChecking(true);
-          console.log("Detecting Firebase email sign-in link, completing sign-in...");
-          const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
-          let email = localStorage.getItem('emailForSignIn') || params.get('email') || '';
-          if (!email) {
-            email = window.prompt('Please enter your email to confirm sign-in:') || '';
-          }
-          if (email) {
-            const result = await signInWithEmailLink(auth, email, window.location.href);
-            localStorage.removeItem('emailForSignIn');
-            console.log("Successfully signed in via email magic link!", result.user);
-            
-            // Clean parameters from address bar
-            const currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.delete('email_link');
-            currentUrl.searchParams.delete('email');
-            if (window.location.hash.includes('email_link')) {
-              const hashParts = window.location.hash.split('?');
-              if (hashParts[1]) {
-                const hashParams = new URLSearchParams(hashParts[1]);
-                hashParams.delete('email_link');
-                hashParams.delete('email');
-                const newHashParams = hashParams.toString();
-                window.location.hash = hashParts[0] + (newHashParams ? '?' + newHashParams : '');
-              }
-            }
-            window.history.replaceState({}, document.title, currentUrl.pathname + currentUrl.search);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to sign in with email link:", err);
-        alert("The login link expired or was already used. Please request a new one.");
-      } finally {
-        setIsAuthChecking(false);
-      }
-    };
-    handleEmailLinkSignIn();
-  }, []);
-
-  // Auth Subscription
+  // Pure Auth Subscription
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -217,28 +100,13 @@ export default function App() {
         return;
       }
 
-      // Check if we need to redirect back to custom domain (Sandbox Redirect Helper)
-      const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
-      const redirectBack = params.get('redirect_back');
-      if (redirectBack) {
-        try {
-          setIsAuthChecking(true);
-          console.log("User is authenticated on sandbox, redirecting back to custom domain:", redirectBack);
-          const idToken = await user.getIdToken();
-          const separator = redirectBack.includes('?') ? '&' : '?';
-          window.location.href = `${redirectBack}${separator}auth_token=${encodeURIComponent(idToken)}`;
-          return;
-        } catch (err) {
-          console.error("Error redirecting back with token:", err);
-        }
-      }
-
       const emailLower = user.email?.toLowerCase();
       if (emailLower === 'kungutim541@gmail.com') {
         setIsAdminUser(true);
         setIsAuthChecking(false);
         return;
       }
+
       try {
         const { getDoc, doc } = await import('firebase/firestore');
         let isAuthorized = false;
@@ -482,7 +350,6 @@ export default function App() {
             onNavigate={navigateTo} 
             currentUser={currentUser}
             isAdminUser={isAdminUser}
-            sandboxUrl={sandboxUrl}
           />
         </main>
       </div>
@@ -2746,7 +2613,6 @@ interface AdminDashboardViewProps {
   onNavigate: (hash: string) => void;
   currentUser: User | null;
   isAdminUser: boolean;
-  sandboxUrl: string;
 }
 
 function AdminDashboardView({ 
@@ -2756,67 +2622,12 @@ function AdminDashboardView({
   blogs, setBlogs, 
   onNavigate,
   currentUser,
-  isAdminUser,
-  sandboxUrl
+  isAdminUser
 }: AdminDashboardViewProps) {
   const [loginError, setLoginError] = useState('');
-  const [loginEmail, setLoginEmail] = useState('');
-  const [emailLinkSent, setEmailLinkSent] = useState(false);
-  const [emailLinkSending, setEmailLinkSending] = useState(false);
-
-  const handleSendEmailLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginEmail.trim()) return;
-    const email = loginEmail.trim().toLowerCase();
-
-    // Check if the email is a configured admin or the super administrator
-    let isConfiguredAdmin = email === 'kungutim541@gmail.com';
-    if (!isConfiguredAdmin) {
-      try {
-        const { getDoc, doc } = await import('firebase/firestore');
-        const emailDoc = await getDoc(doc(db, 'admins', email));
-        if (emailDoc.exists()) {
-          isConfiguredAdmin = true;
-        }
-      } catch (err) {
-        console.error("Error verifying email before sending link:", err);
-      }
-    }
-
-    if (!isConfiguredAdmin) {
-      setLoginError(`"${email}" is not configured as an administrator. Authorized personnel only.`);
-      return;
-    }
-
-    setEmailLinkSending(true);
-    setLoginError('');
-    try {
-      const redirectBackUrl = window.location.href; // e.g. https://kagztours.vercel.app/#/admin or http://localhost:3000/#/admin
-      const actionCodeSettings = {
-        // Send them to the sandbox URL which is whitelisted by Firebase Auth
-        url: `${sandboxUrl}/#/admin?email_link=true&email=${encodeURIComponent(email)}&redirect_back=${encodeURIComponent(redirectBackUrl)}`,
-        handleCodeInApp: true,
-      };
-
-      await sendSignInLinkToEmail(auth, email, actionCodeSettings);
-      localStorage.setItem('emailForSignIn', email);
-      setEmailLinkSent(true);
-      alert(`Success! A secure magic sign-in link has been sent to ${email}. Please check your inbox or spam folder.`);
-    } catch (err: any) {
-      console.error("Error sending email link:", err);
-      if (err?.code === 'auth/operation-not-allowed') {
-        setLoginError(
-          "⚠️ Email Link sign-in is not enabled in your Firebase Console. " +
-          "To use this feature, please go to your Firebase Console -> Authentication -> Sign-in method, " +
-          "add 'Email/Password' as a sign-in provider, and toggle 'Email link (passwordless sign-in)' to enabled."
-        );
-      } else {
-        setLoginError(err?.message || "Failed to send magic sign-in link.");
-      }
-    } finally {
-      setEmailLinkSending(false);
-    }
-  };
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState(false);
+  const [domainCopied, setDomainCopied] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs' | 'admins'>('enquiries');
   const [searchQuery, setSearchQuery] = useState('');
@@ -2908,7 +2719,9 @@ function AdminDashboardView({
 
   const handleGoogleSignIn = async () => {
     try {
+      setIsSigningIn(true);
       setLoginError('');
+      setUnauthorizedDomain(false);
       const user = await loginWithGoogle();
       
       const emailLower = user.email?.toLowerCase();
@@ -2930,24 +2743,22 @@ function AdminDashboardView({
       }
 
       if (!isAuthorized) {
-        setLoginError(`Authorized personnel only. "${user.email}" is not configured as an administrator.`);
+        setLoginError(`Access denied. "${user.email}" is not registered as an authorized administrator. Please sign in with kungutim541@gmail.com or have an existing admin add your email.`);
         await logoutUser();
       }
     } catch (err: any) {
       console.error("Authentication error:", err);
       if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
-        setLoginError("This domain is not whitelisted in the Firebase sandbox project. Redirecting securely via Sandbox helper...");
-        // Auto-redirect to sandbox for seamless SSO bypass of the vercel domain restriction
-        setTimeout(() => handleSandboxRedirect(), 1500);
+        setUnauthorizedDomain(true);
+        setLoginError("This domain is not yet authorized in Firebase Authentication.");
+      } else if (err?.code === 'auth/popup-closed-by-user') {
+        // User closed popup without signing in, clean state
       } else {
-        setLoginError(err?.message || "Failed to authenticate with Google.");
+        setLoginError(err?.message || "Failed to authenticate with Google. Please try again.");
       }
+    } finally {
+      setIsSigningIn(false);
     }
-  };
-
-  const handleSandboxRedirect = () => {
-    const redirectUrl = `${sandboxUrl}/#/admin?redirect_back=${encodeURIComponent(window.location.href)}`;
-    window.location.href = redirectUrl;
   };
 
   const handleLogout = async () => {
@@ -3228,17 +3039,12 @@ function AdminDashboardView({
   const isStaffAuthenticated = isAdminUser;
 
   if (!isStaffAuthenticated) {
-    const isCustomDomain = window.location.hostname !== 'localhost' && !window.location.hostname.endsWith('.run.app');
-    const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
-    const isRedirectingBack = params.has('redirect_back');
+    const currentDomain = window.location.hostname;
 
-    // Automatically handle direct/redirect sign-in based on custom domain status
-    const handleUnifiedSignIn = () => {
-      if (isCustomDomain) {
-        handleSandboxRedirect();
-      } else {
-        handleGoogleSignIn();
-      }
+    const copyCurrentDomain = () => {
+      navigator.clipboard.writeText(currentDomain);
+      setDomainCopied(true);
+      setTimeout(() => setDomainCopied(false), 3000);
     };
 
     return (
@@ -3247,89 +3053,84 @@ function AdminDashboardView({
           <div className="inline-flex p-4 bg-[#FAF7F2] rounded-full mb-6 select-none">
             <Lock className="w-10 h-10 text-[#C5A880]" />
           </div>
-          <h1 className="font-serif text-3xl font-bold text-[#1C2421] mb-2">KAGZ Concierge Portal</h1>
-          <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6 select-none">Internal CMS Gatekeeper</p>
           
-          {isRedirectingBack && (
-            <div className="mb-6 p-4 bg-[#C5A880]/10 border border-[#C5A880]/30 rounded text-stone-850 text-xs text-left">
-              <p className="font-bold mb-1">🔑 Sandbox Authentication Active</p>
-              <p className="font-light text-stone-600">Once you complete authentication on this secure sandbox domain, you will be redirected back to your live Vercel dashboard automatically.</p>
+          <h1 className="font-serif text-3xl font-bold text-[#1C2421] mb-2">KAGZ Concierge Portal</h1>
+          <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6 select-none">Staff CMS & Curation Manager</p>
+          
+          <div className="mb-6 space-y-4 text-left">
+            <p className="text-stone-600 text-xs leading-relaxed font-light">
+              This portal is restricted to authorized safari curators. Sign in with your registered Google account (<span className="font-mono text-stone-900 font-medium">kungutim541@gmail.com</span> or authorized staff).
+            </p>
+            
+            {/* Primary Google Sign-in button */}
+            <button
+              type="button"
+              disabled={isSigningIn}
+              onClick={handleGoogleSignIn}
+              className="w-full py-3.5 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/40 text-stone-900 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-3 disabled:opacity-50 shadow-sm"
+            >
+              {isSigningIn ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#C5A880]" />
+                  <span>Connecting to Google...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
+                    <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
+                    <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
+                    <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
+                  </svg>
+                  <span>Sign in with Google</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Domain Authorization Helper (Shown when auth/unauthorized-domain occurs) */}
+          {unauthorizedDomain && (
+            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 text-left text-xs space-y-3 rounded">
+              <div className="flex items-start gap-2">
+                <span className="text-amber-600 font-bold text-sm">⚠️</span>
+                <div>
+                  <h4 className="font-bold text-stone-900 text-xs">Domain Authorization Required</h4>
+                  <p className="text-stone-600 text-[11px] mt-0.5 leading-relaxed">
+                    Firebase Authentication requires custom domains to be added to the project's authorized domains list once.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-amber-200 p-2.5 rounded flex items-center justify-between gap-2">
+                <span className="font-mono text-[11px] text-stone-800 truncate">{currentDomain}</span>
+                <button
+                  type="button"
+                  onClick={copyCurrentDomain}
+                  className="px-2.5 py-1 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] text-[10px] font-bold uppercase tracking-wider rounded transition-colors shrink-0 cursor-pointer"
+                >
+                  {domainCopied ? "Copied!" : "Copy Domain"}
+                </button>
+              </div>
+
+              <div className="space-y-1 text-[11px] text-stone-600 leading-relaxed">
+                <p>1. Open <a href="https://console.firebase.google.com/project/gen-lang-client-0747885655/authentication/settings" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-semibold">Firebase Authentication Settings &rarr;</a></p>
+                <p>2. Under <strong>Authorized domains</strong>, click <strong>Add domain</strong> and paste <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px]">{currentDomain}</code>.</p>
+                <p>3. Once saved, click <strong>Sign in with Google</strong> above!</p>
+              </div>
             </div>
           )}
 
-          {/* Unified, Friction-free Dual Login Panel */}
-          <div className="mb-6 pb-2 space-y-5 text-left">
-            <p className="text-stone-500 text-[11px] leading-relaxed font-light text-left">
-              This portal is restricted to authorized administrative personnel. Choose a sign-in method using your registered administrator email address to manage enquiries and content.
-            </p>
-            
-            {/* OPTION 1: Google OAuth with automatic SSO redirect on custom domains */}
-            <div className="space-y-2">
-              <label className="block text-[9px] font-bold uppercase tracking-wider text-stone-400 select-none">Option 1: Google OAuth</label>
-              <button
-                type="button"
-                onClick={handleUnifiedSignIn}
-                className="w-full py-3 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-850 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
-              >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
-                  <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
-                  <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
-                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
-                </svg>
-                <span>Sign in with Google</span>
-              </button>
-            </div>
-
-            {/* OR Separator */}
-            <div className="flex items-center my-4 select-none">
-              <div className="flex-grow border-t border-stone-200"></div>
-              <span className="px-3 text-[9px] uppercase font-bold text-stone-400 font-sans">OR</span>
-              <div className="flex-grow border-t border-stone-200"></div>
-            </div>
-
-            {/* OPTION 2: Passwordless Direct Email Sign-In / OTP */}
-            <form onSubmit={handleSendEmailLink} className="space-y-3">
-              <label className="block text-[9px] font-bold uppercase tracking-wider text-stone-400 select-none">Option 2: Direct Email Sign-In</label>
-              <div className="space-y-1">
-                <input
-                  type="email"
-                  required
-                  placeholder="Enter your registered admin email"
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 px-4 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900 placeholder-stone-400 font-sans"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={emailLinkSending}
-                className="w-full py-3 bg-[#1C2421] hover:bg-[#C5A880] text-white hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer disabled:opacity-50 text-center"
-              >
-                {emailLinkSending ? "Sending link..." : "Send Sign-in Link to Inbox"}
-              </button>
-              
-              {emailLinkSent && (
-                <p className="text-emerald-700 text-[10px] font-medium leading-relaxed bg-emerald-50 border border-emerald-200 p-2.5 rounded text-left">
-                  ✅ <strong>Sign-in link sent!</strong> Check your email inbox (and spam folder) for the secure magic sign-in link.
-                </p>
-              )}
-            </form>
-
-            {isCustomDomain && (
-              <p className="text-[9px] text-amber-600 font-medium tracking-wide bg-amber-50/70 border border-amber-200/50 p-2.5 rounded text-left leading-relaxed">
-                ℹ️ <strong>Custom Domain Mode:</strong> Login requests will automatically route through the secure sandbox SSO helper to bypass Vercel origin restrictions.
-              </p>
-            )}
-
-            <p className="text-[9px] text-stone-400 font-mono text-center pt-2">Authorized Super Admin: kungutim541@gmail.com</p>
-          </div>
-
-          {loginError && (
-            <div className="text-rose-600 text-[11px] font-semibold mb-4 leading-relaxed text-left font-sans bg-rose-50 border border-rose-200 p-3 rounded">
+          {loginError && !unauthorizedDomain && (
+            <div className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed text-left font-sans bg-rose-50 border border-rose-200 p-3 rounded">
               {loginError}
             </div>
           )}
+
+          <div className="pt-2 border-t border-stone-100">
+            <p className="text-[10px] text-stone-400 font-mono">
+              Authorized Administrator: <span className="text-stone-600">kungutim541@gmail.com</span>
+            </p>
+          </div>
 
           <button 
             onClick={() => onNavigate('#/')}
