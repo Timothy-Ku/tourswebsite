@@ -64,7 +64,7 @@ import {
   handleFirestoreError, 
   OperationType 
 } from './firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, User, isSignInWithEmailLink, signInWithEmailLink, sendSignInLinkToEmail } from 'firebase/auth';
 import { 
   collection, 
   doc, 
@@ -124,6 +124,47 @@ export default function App() {
       }
     };
     handleAuthToken();
+  }, []);
+
+  // Handle incoming email magic link sign-in on mount
+  useEffect(() => {
+    const handleEmailLinkSignIn = async () => {
+      try {
+        if (isSignInWithEmailLink(auth, window.location.href)) {
+          setIsAuthChecking(true);
+          console.log("Detecting Firebase email sign-in link, completing sign-in...");
+          let email = localStorage.getItem('emailForSignIn') || '';
+          if (!email) {
+            email = window.prompt('Please enter your email to confirm sign-in:') || '';
+          }
+          if (email) {
+            const result = await signInWithEmailLink(auth, email, window.location.href);
+            localStorage.removeItem('emailForSignIn');
+            console.log("Successfully signed in via email magic link!", result.user);
+            
+            // Clean parameters from address bar
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.delete('email_link');
+            if (window.location.hash.includes('email_link')) {
+              const hashParts = window.location.hash.split('?');
+              if (hashParts[1]) {
+                const hashParams = new URLSearchParams(hashParts[1]);
+                hashParams.delete('email_link');
+                const newHashParams = hashParams.toString();
+                window.location.hash = hashParts[0] + (newHashParams ? '?' + newHashParams : '');
+              }
+            }
+            window.history.replaceState({}, document.title, currentUrl.pathname + currentUrl.search);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to sign in with email link:", err);
+        alert("The login link expired or was already used. Please request a new one.");
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+    handleEmailLinkSignIn();
   }, []);
 
   // Auth Subscription
@@ -2675,6 +2716,57 @@ function AdminDashboardView({
   isAdminUser
 }: AdminDashboardViewProps) {
   const [loginError, setLoginError] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [emailLinkSent, setEmailLinkSent] = useState(false);
+  const [emailLinkSending, setEmailLinkSending] = useState(false);
+
+  const handleSendEmailLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail.trim()) return;
+    const email = loginEmail.trim().toLowerCase();
+
+    // Check if the email is a configured admin or the super administrator
+    let isConfiguredAdmin = email === 'kungutim541@gmail.com';
+    if (!isConfiguredAdmin) {
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        const emailDoc = await getDoc(doc(db, 'admins', email));
+        if (emailDoc.exists()) {
+          isConfiguredAdmin = true;
+        }
+      } catch (err) {
+        console.error("Error verifying email before sending link:", err);
+      }
+    }
+
+    if (!isConfiguredAdmin) {
+      setLoginError(`"${email}" is not configured as an administrator. Authorized personnel only.`);
+      return;
+    }
+
+    setEmailLinkSending(true);
+    setLoginError('');
+    try {
+      const redirectBackUrl = window.location.href; // e.g. https://kagztours.vercel.app/#/admin or http://localhost:3000/#/admin
+      const sandboxUrl = 'https://ais-pre-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app';
+      const actionCodeSettings = {
+        // Send them to the sandbox URL which is whitelisted by Firebase Auth
+        url: `${sandboxUrl}/#/admin?email_link=true&redirect_back=${encodeURIComponent(redirectBackUrl)}`,
+        handleCodeInApp: true,
+      };
+
+      await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+      localStorage.setItem('emailForSignIn', email);
+      setEmailLinkSent(true);
+      alert(`Success! A secure magic sign-in link has been sent to ${email}. Please check your inbox or spam folder.`);
+    } catch (err: any) {
+      console.error("Error sending email link:", err);
+      setLoginError(err?.message || "Failed to send magic sign-in link.");
+    } finally {
+      setEmailLinkSending(false);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs' | 'admins'>('enquiries');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
@@ -2801,7 +2893,7 @@ function AdminDashboardView({
 
   const handleSandboxRedirect = () => {
     const sandboxUrl = 'https://ais-pre-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app';
-    const redirectUrl = `${sandboxUrl}/#/admin?redirect_back=${encodeURIComponent(window.location.origin + window.location.pathname)}`;
+    const redirectUrl = `${sandboxUrl}/#/admin?redirect_back=${encodeURIComponent(window.location.href)}`;
     window.location.href = redirectUrl;
   };
 
@@ -3103,15 +3195,16 @@ function AdminDashboardView({
             </div>
           )}
 
-          {/* Production-grade Google Authentication */}
+          {/* Option A: Google/Gmail Auth */}
           <div className="mb-6 pb-2 space-y-3">
+            <h2 className="text-stone-700 text-xs font-bold uppercase tracking-wider text-left border-b border-stone-100 pb-1.5 mb-2">Option 1: Sign in with Google</h2>
             {isCustomDomain ? (
               <>
                 {/* Custom Vercel Redirect button (Recommended) */}
                 <button
                   type="button"
                   onClick={handleSandboxRedirect}
-                  className="w-full py-3.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2 border border-stone-800"
+                  className="w-full py-3 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2 border border-stone-800"
                 >
                   <svg className="w-4 h-4 fill-current text-[#C5A880]" viewBox="0 0 24 24">
                     <path d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
@@ -3119,35 +3212,75 @@ function AdminDashboardView({
                     <path d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
                     <path d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
                   </svg>
-                  <span>Sign in via Sandbox (Vercel Fix)</span>
+                  <span>Google Sign-In (Vercel Fix)</span>
                 </button>
-                <div className="flex items-center justify-between text-[10px] text-stone-400 font-bold uppercase py-2">
-                  <div className="h-px bg-stone-200 flex-grow mr-2"></div>
-                  <span>or try direct</span>
-                  <div className="h-px bg-stone-200 flex-grow ml-2"></div>
-                </div>
               </>
-            ) : null}
-
-            {/* Direct Login Button */}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              className="w-full py-3.5 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-800 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
-                <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
-                <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
-                <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
-              </svg>
-              <span>{isCustomDomain ? 'Direct Sign-In with Google' : 'Sign in with Google'}</span>
-            </button>
-
-            <p className="text-[10px] text-stone-400 mt-3 font-mono">Authorized Administrator: kungutim541@gmail.com</p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                className="w-full py-3 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-800 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
+                  <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
+                  <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
+                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
+                </svg>
+                <span>Sign in with Google</span>
+              </button>
+            )}
           </div>
 
-          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed">{loginError}</p>}
+          <div className="flex items-center justify-between text-[10px] text-stone-400 font-bold uppercase py-4">
+            <div className="h-px bg-stone-200 flex-grow mr-3"></div>
+            <span>or</span>
+            <div className="h-px bg-stone-200 flex-grow ml-3"></div>
+          </div>
+
+          {/* Option B: Passwordless Email Link Auth */}
+          <div className="mb-6 text-left">
+            <h2 className="text-stone-700 text-xs font-bold uppercase tracking-wider border-b border-stone-100 pb-1.5 mb-3">Option 2: Magic Link to Inbox</h2>
+            {emailLinkSent ? (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 text-xs space-y-1.5">
+                <p className="font-bold">✉️ Magic link sent successfully!</p>
+                <p className="font-light">We sent a secure, passwordless magic login link to <strong>{loginEmail}</strong>. Please check your inbox (and spam folder) and click the link to log in instantly!</p>
+                <button 
+                  type="button" 
+                  onClick={() => setEmailLinkSent(false)} 
+                  className="text-stone-500 hover:text-stone-800 underline font-semibold text-[10px] uppercase mt-2 block"
+                >
+                  Send another link
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSendEmailLink} className="space-y-3">
+                <p className="text-stone-500 text-[11px] leading-relaxed mb-2 font-light">
+                  Type in your administrator email below. We'll instantly email you a passwordless magic sign-in link.
+                </p>
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="email"
+                    required
+                    placeholder="Enter admin email (e.g. kungutim541@gmail.com)"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] text-xs text-stone-900 rounded-none placeholder-stone-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={emailLinkSending}
+                    className="w-full py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer text-center"
+                  >
+                    {emailLinkSending ? 'Sending Magic Link...' : 'Email Me Magic Sign-In Link'}
+                  </button>
+                </div>
+              </form>
+            )}
+            <p className="text-[9px] text-stone-400 mt-3 font-mono text-center">Authorized Administrator: kungutim541@gmail.com</p>
+          </div>
+
+          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed text-center">{loginError}</p>}
 
           <button 
             onClick={() => onNavigate('#/')}
