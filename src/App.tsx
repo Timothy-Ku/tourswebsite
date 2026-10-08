@@ -118,6 +118,9 @@ export default function App() {
     }, (error) => {
       console.warn("Firestore access error for destinations, falling back to static:", error);
       setDestinations(destinationsData);
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'destinations');
+      } catch (e) {}
     });
 
     // 2. Tours Subscription
@@ -134,6 +137,9 @@ export default function App() {
     }, (error) => {
       console.warn("Firestore access error for tours, falling back to static:", error);
       setTours(toursData);
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'tours');
+      } catch (e) {}
     });
 
     // 3. Blogs Subscription
@@ -150,14 +156,15 @@ export default function App() {
     }, (error) => {
       console.warn("Firestore access error for blogs, falling back to static:", error);
       setBlogs(blogData);
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'blogs');
+      } catch (e) {}
     });
 
-    // 4. Enquiries Subscription (Only if admin is logged in locally or via Google Auth)
+    // 4. Enquiries Subscription (Only if admin is logged in via Google Auth to avoid unauthenticated permission errors)
     let unsubEnquiries = () => {};
-    const localSessionActive = localStorage.getItem('kagz_admin_session') === 'active';
-    const isUserAdmin = localSessionActive || isAdminUser;
 
-    if (isUserAdmin) {
+    if (isAdminUser) {
       unsubEnquiries = onSnapshot(collection(db, 'enquiries'), (snapshot) => {
         const list: any[] = [];
         snapshot.forEach((doc) => {
@@ -169,6 +176,9 @@ export default function App() {
         console.warn("Firestore access error for enquiries, using local storage fallback:", error);
         const stored = localStorage.getItem('kagz_enquiries');
         if (stored) setEnquiries(JSON.parse(stored));
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'enquiries');
+        } catch (e) {}
       });
     } else {
       const stored = localStorage.getItem('kagz_enquiries');
@@ -213,6 +223,9 @@ export default function App() {
       const updated = [newEnq, ...enquiries];
       setEnquiries(updated);
       localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+      try {
+        handleFirestoreError(err, OperationType.CREATE, `enquiries/${id}`);
+      } catch (e) {}
     }
     setPlanSuccessData(enquiryData);
   };
@@ -332,7 +345,7 @@ export default function App() {
           </button>
           <div className="max-w-4xl max-h-[85vh] relative flex flex-col items-center">
             <img 
-              src={lightboxImage.src} 
+              src={lightboxImage.src || undefined} 
               alt={lightboxImage.alt}
               onError={handleImageError}
               className="max-w-full max-h-[80vh] object-contain border border-stone-800"
@@ -579,7 +592,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage, destinations, to
                 <div className="relative h-64 overflow-hidden">
                   <div className="absolute inset-0 bg-black/10 z-10 group-hover:bg-transparent transition-colors duration-300" />
                   <img 
-                    src={dest.image} 
+                    src={dest.image || undefined} 
                     alt={dest.tagline}
                     onError={onImageError}
                     className="w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -661,7 +674,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage, destinations, to
               >
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent z-10" />
                 <img 
-                  src={exp.img} 
+                  src={exp.img || undefined} 
                   alt={exp.title}
                   onError={onImageError}
                   className="absolute inset-0 w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -766,7 +779,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage, destinations, to
               >
                 <div className="relative w-full md:w-1/2 h-64 md:h-auto overflow-hidden">
                   <img 
-                    src={tour.image} 
+                    src={tour.image || undefined} 
                     alt={tour.name}
                     onError={onImageError}
                     className="w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -822,7 +835,7 @@ function HomeView({ onNavigate, onImageError, setLightboxImage, destinations, to
                   <Camera className="w-8 h-8 text-white stroke-[1.2]" />
                 </div>
                 <img 
-                  src={img.src} 
+                  src={img.src || undefined} 
                   alt={img.alt}
                   onError={onImageError}
                   className="w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -1005,7 +1018,7 @@ function DestinationsView({ onNavigate, onImageError, destinations }: Destinatio
           >
             <div className="relative h-64 overflow-hidden">
               <img 
-                src={dest.image} 
+                src={dest.image || undefined} 
                 alt={dest.name}
                 onError={onImageError}
                 className="w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -1092,7 +1105,7 @@ function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessDat
       <section className="relative h-[55vh] sm:h-[60vh] flex items-center justify-center overflow-hidden bg-[#1C2421]">
         <div className="absolute inset-0 bg-black/45 z-10" />
         <img 
-          src={dest.image} 
+          src={dest.image || undefined} 
           alt={dest.name}
           onError={onImageError}
           className="absolute inset-0 w-full h-full object-cover transform scale-100"
@@ -1353,7 +1366,7 @@ function ToursView({ onNavigate, onImageError, tours }: ToursViewProps) {
           >
             <div className="relative w-full md:w-1/2 h-64 md:h-auto overflow-hidden">
               <img 
-                src={tour.image} 
+                src={tour.image || undefined} 
                 alt={tour.name}
                 onError={onImageError}
                 className="w-full h-full object-cover transform scale-100 group-hover:scale-105 transition-transform duration-500"
@@ -1437,7 +1450,7 @@ function TourDetailView({ id, onNavigate, onImageError, setPlanSuccessData, tour
       <section className="relative h-[55vh] sm:h-[60vh] flex items-center justify-center overflow-hidden bg-[#1C2421]">
         <div className="absolute inset-0 bg-black/45 z-10" />
         <img 
-          src={tour.image} 
+          src={tour.image || undefined} 
           alt={tour.name}
           onError={onImageError}
           className="absolute inset-0 w-full h-full object-cover transform scale-100"
@@ -1637,7 +1650,7 @@ function AboutView({ onNavigate, onImageError }: AboutViewProps) {
         </div>
         <div className="relative h-64 overflow-hidden border border-[#EADCC9]/30">
           <img 
-            src={culturePhoto} 
+            src={culturePhoto || undefined} 
             alt="Maasai elders"
             onError={onImageError}
             className="w-full h-full object-cover"
@@ -1845,7 +1858,7 @@ function BlogDetailView({ id, onNavigate, onImageError, blogs, destinations }: B
       {/* Featured visual */}
       <div className="my-8 relative h-64 sm:h-[450px] overflow-hidden border border-stone-100 select-none">
         <img 
-          src={blogFeaturedPhoto} 
+          src={blogFeaturedPhoto || undefined} 
           alt={article.title}
           onError={onImageError}
           className="w-full h-full object-cover"
@@ -1955,7 +1968,7 @@ function GalleryPageView({ onImageError, setLightboxImage }: GalleryPageViewProp
               <span className="text-[#C5A880] text-[9px] uppercase tracking-wider mt-1">{img.category}</span>
             </div>
             <img 
-              src={img.src} 
+              src={img.src || undefined} 
               alt={img.alt}
               onError={onImageError}
               className="w-full h-auto object-cover transform scale-100 group-hover:scale-102 transition-transform duration-500"
@@ -2618,6 +2631,9 @@ function AdminDashboardView({
       await setDoc(doc(db, 'enquiries', id), { status: newStatus }, { merge: true });
     } catch (err) {
       console.error("Failed to update status in Firestore, updating locally:", err);
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `enquiries/${id}`);
+      } catch (e) {}
     }
     const updated = enquiries.map(e => e.id === id ? { ...e, status: newStatus } : e);
     setEnquiries(updated);
@@ -2631,6 +2647,9 @@ function AdminDashboardView({
         await deleteDoc(doc(db, 'enquiries', id));
       } catch (err) {
         console.error("Failed to delete enquiry from Firestore, deleting locally:", err);
+        try {
+          handleFirestoreError(err, OperationType.DELETE, `enquiries/${id}`);
+        } catch (e) {}
       }
       const updated = enquiries.filter(e => e.id !== id);
       setEnquiries(updated);
@@ -2694,6 +2713,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error(`Failed to reset ${type} on Firestore:`, err);
       alert(`Failed to reset ${type} on Firestore: ${err instanceof Error ? err.message : String(err)}`);
+      try {
+        handleFirestoreError(err, OperationType.WRITE, type);
+      } catch (e) {}
     }
   };
 
@@ -2747,6 +2769,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error("Bulk seeding failed:", err);
       alert("Bulk seeding failed. Check console or security rules.");
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'bulk_seed');
+      } catch (e) {}
     } finally {
       setIsSeeding(false);
     }
@@ -2772,6 +2797,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error("Failed to save destination to Firestore:", err);
       alert("Firestore Permission Denied or validation error.");
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `destinations/${slug}`);
+      } catch (e) {}
     }
     const updated = destinations.some(d => d.id === slug) ? destinations.map(d => d.id === slug ? data : d) : [...destinations, data];
     setDestinations(updated);
@@ -2798,6 +2826,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error("Failed to save tour to Firestore:", err);
       alert("Firestore Permission Denied or validation error.");
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `tours/${slug}`);
+      } catch (e) {}
     }
     const updated = tours.some(t => t.id === slug) ? tours.map(t => t.id === slug ? data : t) : [...tours, data];
     setTours(updated);
@@ -2822,6 +2853,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error("Failed to save article to Firestore:", err);
       alert("Firestore Permission Denied or validation error.");
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `blogs/${slug}`);
+      } catch (e) {}
     }
     const updated = blogs.some(b => b.id === slug) ? blogs.map(b => b.id === slug ? data : b) : [...blogs, data];
     setBlogs(updated);
@@ -2852,6 +2886,9 @@ function AdminDashboardView({
     } catch (err) {
       console.error("Failed to delete content from Firestore:", err);
       alert("Firestore Permission Denied or connection error.");
+      try {
+        handleFirestoreError(err, OperationType.DELETE, `${type}/${id}`);
+      } catch (e) {}
     }
   };
 
@@ -3336,7 +3373,7 @@ function AdminDashboardView({
                 {filteredDests.map(d => (
                   <div key={d.id} className="bg-white border border-stone-200 shadow-sm flex flex-col">
                     <img
-                      src={d.image}
+                      src={d.image || undefined}
                       alt={d.name}
                       className="h-44 w-full object-cover"
                       onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546182990-dffeafbe841d?auto=format&fit=crop&w=1200&q=80'; }}
@@ -3604,7 +3641,7 @@ function AdminDashboardView({
                 {filteredTours.map(t => (
                   <div key={t.id} className="bg-white border border-stone-200 shadow-sm flex flex-col">
                     <img
-                      src={t.image}
+                      src={t.image || undefined}
                       alt={t.name}
                       className="h-44 w-full object-cover"
                       onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546182990-dffeafbe841d?auto=format&fit=crop&w=1200&q=80'; }}
