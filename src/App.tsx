@@ -2581,8 +2581,6 @@ function AdminDashboardView({
   currentUser,
   isAdminUser
 }: AdminDashboardViewProps) {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('kagz_admin_session') === 'active');
-  const [passcode, setPasscode] = useState('');
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs'>('enquiries');
   const [searchQuery, setSearchQuery] = useState('');
@@ -2595,18 +2593,6 @@ function AdminDashboardView({
   const [editingDest, setEditingDest] = useState<any | null>(null);
   const [editingTour, setEditingTour] = useState<any | null>(null);
   const [editingBlog, setEditingBlog] = useState<any | null>(null);
-
-  // Authentication Gate
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passcode === 'kagz2026') {
-      setIsLoggedIn(true);
-      localStorage.setItem('kagz_admin_session', 'active');
-      setLoginError('');
-    } else {
-      setLoginError('Incorrect credentials. Please use passcode "kagz2026"');
-    }
-  };
 
   const handleGoogleSignIn = async () => {
     try {
@@ -2622,8 +2608,6 @@ function AdminDashboardView({
   };
 
   const handleLogout = async () => {
-    setIsLoggedIn(false);
-    localStorage.removeItem('kagz_admin_session');
     try {
       await logoutUser();
     } catch (err) {
@@ -2898,7 +2882,7 @@ function AdminDashboardView({
     }
   };
 
-  const isStaffAuthenticated = isLoggedIn || isAdminUser;
+  const isStaffAuthenticated = isAdminUser;
 
   if (!isStaffAuthenticated) {
     return (
@@ -2911,7 +2895,7 @@ function AdminDashboardView({
           <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6">Internal CMS Gatekeeper</p>
           
           {/* Production-grade Google Authentication */}
-          <div className="mb-8 pb-6 border-b border-stone-150">
+          <div className="mb-6 pb-2">
             <button
               type="button"
               onClick={handleGoogleSignIn}
@@ -2925,29 +2909,11 @@ function AdminDashboardView({
               </svg>
               <span>Sign in with Google</span>
             </button>
-            <p className="text-[10px] text-stone-400 mt-2 font-mono">Authorized Administrator: kungutim541@gmail.com</p>
+            <p className="text-[10px] text-stone-400 mt-3 font-mono">Authorized Administrator: kungutim541@gmail.com</p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4 text-left">
-            <div>
-              <label className="block text-[10px] font-bold uppercase text-stone-500 tracking-widest mb-1.5">Or Enter Passcode Gate</label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={passcode}
-                onChange={(e) => setPasscode(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-stone-200 px-4 py-3 text-sm focus:outline-none focus:border-[#C5A880] rounded-none text-stone-950 font-mono text-center tracking-widest"
-              />
-            </div>
-            {loginError && <p className="text-rose-600 text-xs font-semibold">{loginError}</p>}
-            <button
-              type="submit"
-              className="w-full py-3.5 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-widest transition-all shadow-md rounded-full cursor-pointer"
-            >
-              Authenticate with Passcode &rarr;
-            </button>
-          </form>
+          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4">{loginError}</p>}
+
           <button 
             onClick={() => onNavigate('#/')}
             className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer"
