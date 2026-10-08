@@ -91,6 +91,43 @@ export default function App() {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
+  // Dynamic Sandbox URL state
+  const [sandboxUrl, setSandboxUrl] = useState('https://ais-dev-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app');
+
+  // Fetch active sandbox URL from Firestore on mount so we don't rely on hardcoded old values
+  useEffect(() => {
+    const fetchSandboxUrl = async () => {
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        const docSnap = await getDoc(doc(db, 'config', 'sandbox'));
+        if (docSnap.exists() && docSnap.data().url) {
+          console.log("Fetched active sandbox URL from Firestore config:", docSnap.data().url);
+          setSandboxUrl(docSnap.data().url);
+        }
+      } catch (err) {
+        console.warn("Could not fetch sandbox URL config from Firestore, using default fallback:", err);
+      }
+    };
+    fetchSandboxUrl();
+  }, []);
+
+  // Auto-save active sandbox URL to Firestore when admin is logged in on sandbox
+  useEffect(() => {
+    if (isAdminUser && (window.location.hostname.endsWith('run.app') || window.location.hostname === 'localhost')) {
+      const saveSandboxUrl = async () => {
+        try {
+          const { setDoc, doc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'config', 'sandbox'), { url: window.location.origin }, { merge: true });
+          console.log("Auto-saved active sandbox URL config in Firestore:", window.location.origin);
+          setSandboxUrl(window.location.origin);
+        } catch (err) {
+          console.error("Failed to auto-save sandbox URL config:", err);
+        }
+      };
+      saveSandboxUrl();
+    }
+  }, [isAdminUser]);
+
   // Handle incoming secure session token (from Sandbox Redirect Helper) on mount
   useEffect(() => {
     const handleAuthToken = async () => {
@@ -133,7 +170,8 @@ export default function App() {
         if (isSignInWithEmailLink(auth, window.location.href)) {
           setIsAuthChecking(true);
           console.log("Detecting Firebase email sign-in link, completing sign-in...");
-          let email = localStorage.getItem('emailForSignIn') || '';
+          const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
+          let email = localStorage.getItem('emailForSignIn') || params.get('email') || '';
           if (!email) {
             email = window.prompt('Please enter your email to confirm sign-in:') || '';
           }
@@ -145,11 +183,13 @@ export default function App() {
             // Clean parameters from address bar
             const currentUrl = new URL(window.location.href);
             currentUrl.searchParams.delete('email_link');
+            currentUrl.searchParams.delete('email');
             if (window.location.hash.includes('email_link')) {
               const hashParts = window.location.hash.split('?');
               if (hashParts[1]) {
                 const hashParams = new URLSearchParams(hashParts[1]);
                 hashParams.delete('email_link');
+                hashParams.delete('email');
                 const newHashParams = hashParams.toString();
                 window.location.hash = hashParts[0] + (newHashParams ? '?' + newHashParams : '');
               }
@@ -193,7 +233,8 @@ export default function App() {
         }
       }
 
-      if (user.email === 'kungutim541@gmail.com') {
+      const emailLower = user.email?.toLowerCase();
+      if (emailLower === 'kungutim541@gmail.com') {
         setIsAdminUser(true);
         setIsAuthChecking(false);
         return;
@@ -201,8 +242,8 @@ export default function App() {
       try {
         const { getDoc, doc } = await import('firebase/firestore');
         let isAuthorized = false;
-        if (user.email) {
-          const emailDoc = await getDoc(doc(db, 'admins', user.email));
+        if (emailLower) {
+          const emailDoc = await getDoc(doc(db, 'admins', emailLower));
           if (emailDoc.exists()) {
             isAuthorized = true;
           }
@@ -441,6 +482,7 @@ export default function App() {
             onNavigate={navigateTo} 
             currentUser={currentUser}
             isAdminUser={isAdminUser}
+            sandboxUrl={sandboxUrl}
           />
         </main>
       </div>
@@ -2704,6 +2746,7 @@ interface AdminDashboardViewProps {
   onNavigate: (hash: string) => void;
   currentUser: User | null;
   isAdminUser: boolean;
+  sandboxUrl: string;
 }
 
 function AdminDashboardView({ 
@@ -2713,7 +2756,8 @@ function AdminDashboardView({
   blogs, setBlogs, 
   onNavigate,
   currentUser,
-  isAdminUser
+  isAdminUser,
+  sandboxUrl
 }: AdminDashboardViewProps) {
   const [loginError, setLoginError] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
@@ -2748,10 +2792,9 @@ function AdminDashboardView({
     setLoginError('');
     try {
       const redirectBackUrl = window.location.href; // e.g. https://kagztours.vercel.app/#/admin or http://localhost:3000/#/admin
-      const sandboxUrl = 'https://ais-pre-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app';
       const actionCodeSettings = {
         // Send them to the sandbox URL which is whitelisted by Firebase Auth
-        url: `${sandboxUrl}/#/admin?email_link=true&redirect_back=${encodeURIComponent(redirectBackUrl)}`,
+        url: `${sandboxUrl}/#/admin?email_link=true&email=${encodeURIComponent(email)}&redirect_back=${encodeURIComponent(redirectBackUrl)}`,
         handleCodeInApp: true,
       };
 
@@ -2761,7 +2804,15 @@ function AdminDashboardView({
       alert(`Success! A secure magic sign-in link has been sent to ${email}. Please check your inbox or spam folder.`);
     } catch (err: any) {
       console.error("Error sending email link:", err);
-      setLoginError(err?.message || "Failed to send magic sign-in link.");
+      if (err?.code === 'auth/operation-not-allowed') {
+        setLoginError(
+          "⚠️ Email Link sign-in is not enabled in your Firebase Console. " +
+          "To use this feature, please go to your Firebase Console -> Authentication -> Sign-in method, " +
+          "add 'Email/Password' as a sign-in provider, and toggle 'Email link (passwordless sign-in)' to enabled."
+        );
+      } else {
+        setLoginError(err?.message || "Failed to send magic sign-in link.");
+      }
     } finally {
       setEmailLinkSending(false);
     }
@@ -2860,11 +2911,12 @@ function AdminDashboardView({
       setLoginError('');
       const user = await loginWithGoogle();
       
-      let isAuthorized = user.email === 'kungutim541@gmail.com';
+      const emailLower = user.email?.toLowerCase();
+      let isAuthorized = emailLower === 'kungutim541@gmail.com';
       if (!isAuthorized) {
         const { getDoc, doc } = await import('firebase/firestore');
-        if (user.email) {
-          const emailDoc = await getDoc(doc(db, 'admins', user.email));
+        if (emailLower) {
+          const emailDoc = await getDoc(doc(db, 'admins', emailLower));
           if (emailDoc.exists()) {
             isAuthorized = true;
           }
@@ -2884,7 +2936,9 @@ function AdminDashboardView({
     } catch (err: any) {
       console.error("Authentication error:", err);
       if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
-        setLoginError("This domain is not whitelisted in the Firebase sandbox project. Please use the 'Secure Google Sign-In via Sandbox' button below to log in.");
+        setLoginError("This domain is not whitelisted in the Firebase sandbox project. Redirecting securely via Sandbox helper...");
+        // Auto-redirect to sandbox for seamless SSO bypass of the vercel domain restriction
+        setTimeout(() => handleSandboxRedirect(), 1500);
       } else {
         setLoginError(err?.message || "Failed to authenticate with Google.");
       }
@@ -2892,7 +2946,6 @@ function AdminDashboardView({
   };
 
   const handleSandboxRedirect = () => {
-    const sandboxUrl = 'https://ais-pre-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app';
     const redirectUrl = `${sandboxUrl}/#/admin?redirect_back=${encodeURIComponent(window.location.href)}`;
     window.location.href = redirectUrl;
   };
@@ -3189,55 +3242,98 @@ function AdminDashboardView({
     };
 
     return (
-      <div className="min-h-screen bg-[#1C2421] flex items-center justify-center px-4 py-12 select-none font-sans">
+      <div className="min-h-screen bg-[#1C2421] flex items-center justify-center px-4 py-12 font-sans select-text">
         <div className="max-w-md w-full bg-white border border-[#EADCC9]/30 p-8 md:p-10 shadow-2xl text-center">
-          <div className="inline-flex p-4 bg-[#FAF7F2] rounded-full mb-6">
+          <div className="inline-flex p-4 bg-[#FAF7F2] rounded-full mb-6 select-none">
             <Lock className="w-10 h-10 text-[#C5A880]" />
           </div>
           <h1 className="font-serif text-3xl font-bold text-[#1C2421] mb-2">KAGZ Concierge Portal</h1>
-          <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6">Internal CMS Gatekeeper</p>
+          <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6 select-none">Internal CMS Gatekeeper</p>
           
           {isRedirectingBack && (
             <div className="mb-6 p-4 bg-[#C5A880]/10 border border-[#C5A880]/30 rounded text-stone-850 text-xs text-left">
               <p className="font-bold mb-1">🔑 Sandbox Authentication Active</p>
-              <p className="font-light text-stone-600">Once you complete Google Authentication on this secure sandbox domain, you will be redirected back to your live Vercel dashboard automatically.</p>
+              <p className="font-light text-stone-600">Once you complete authentication on this secure sandbox domain, you will be redirected back to your live Vercel dashboard automatically.</p>
             </div>
           )}
 
-          {/* Single, Unified, Friction-free Google Login */}
-          <div className="mb-6 pb-2 space-y-4 text-left">
-            <p className="text-stone-500 text-[11px] leading-relaxed mb-4 font-light text-left">
-              This portal is restricted to authorized administrative personnel. Sign in with your registered Google/Gmail account to manage curation enquiries, destinations, tours, and blogs.
+          {/* Unified, Friction-free Dual Login Panel */}
+          <div className="mb-6 pb-2 space-y-5 text-left">
+            <p className="text-stone-500 text-[11px] leading-relaxed font-light text-left">
+              This portal is restricted to authorized administrative personnel. Choose a sign-in method using your registered administrator email address to manage enquiries and content.
             </p>
             
-            <button
-              type="button"
-              onClick={handleUnifiedSignIn}
-              className="w-full py-3.5 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-800 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
-                <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
-                <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
-                <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
-              </svg>
-              <span>Sign in with Google</span>
-            </button>
+            {/* OPTION 1: Google OAuth with automatic SSO redirect on custom domains */}
+            <div className="space-y-2">
+              <label className="block text-[9px] font-bold uppercase tracking-wider text-stone-400 select-none">Option 1: Google OAuth</label>
+              <button
+                type="button"
+                onClick={handleUnifiedSignIn}
+                className="w-full py-3 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-850 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
+                  <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
+                  <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
+                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
+                </svg>
+                <span>Sign in with Google</span>
+              </button>
+            </div>
+
+            {/* OR Separator */}
+            <div className="flex items-center my-4 select-none">
+              <div className="flex-grow border-t border-stone-200"></div>
+              <span className="px-3 text-[9px] uppercase font-bold text-stone-400 font-sans">OR</span>
+              <div className="flex-grow border-t border-stone-200"></div>
+            </div>
+
+            {/* OPTION 2: Passwordless Direct Email Sign-In / OTP */}
+            <form onSubmit={handleSendEmailLink} className="space-y-3">
+              <label className="block text-[9px] font-bold uppercase tracking-wider text-stone-400 select-none">Option 2: Direct Email Sign-In</label>
+              <div className="space-y-1">
+                <input
+                  type="email"
+                  required
+                  placeholder="Enter your registered admin email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 px-4 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900 placeholder-stone-400 font-sans"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={emailLinkSending}
+                className="w-full py-3 bg-[#1C2421] hover:bg-[#C5A880] text-white hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer disabled:opacity-50 text-center"
+              >
+                {emailLinkSending ? "Sending link..." : "Send Sign-in Link to Inbox"}
+              </button>
+              
+              {emailLinkSent && (
+                <p className="text-emerald-700 text-[10px] font-medium leading-relaxed bg-emerald-50 border border-emerald-200 p-2.5 rounded text-left">
+                  ✅ <strong>Sign-in link sent!</strong> Check your email inbox (and spam folder) for the secure magic sign-in link.
+                </p>
+              )}
+            </form>
 
             {isCustomDomain && (
-              <p className="text-[10px] text-amber-600 font-medium tracking-wide bg-amber-50 border border-amber-200 p-2.5 rounded text-left leading-relaxed">
-                ℹ️ <strong>Custom Domain Mode:</strong> To bypass Vercel domain restrictions, sign-in will automatically route through the secure sandbox SSO helper and return you here.
+              <p className="text-[9px] text-amber-600 font-medium tracking-wide bg-amber-50/70 border border-amber-200/50 p-2.5 rounded text-left leading-relaxed">
+                ℹ️ <strong>Custom Domain Mode:</strong> Login requests will automatically route through the secure sandbox SSO helper to bypass Vercel origin restrictions.
               </p>
             )}
 
-            <p className="text-[10px] text-stone-400 mt-4 font-mono text-center">Authorized Administrator: kungutim541@gmail.com</p>
+            <p className="text-[9px] text-stone-400 font-mono text-center pt-2">Authorized Super Admin: kungutim541@gmail.com</p>
           </div>
 
-          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed text-center font-sans">{loginError}</p>}
+          {loginError && (
+            <div className="text-rose-600 text-[11px] font-semibold mb-4 leading-relaxed text-left font-sans bg-rose-50 border border-rose-200 p-3 rounded">
+              {loginError}
+            </div>
+          )}
 
           <button 
             onClick={() => onNavigate('#/')}
-            className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer font-sans"
+            className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer font-sans select-none"
           >
             &larr; Return to Visitor Site
           </button>

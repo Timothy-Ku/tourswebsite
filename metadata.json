@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "KAGZ Tours & Safaris",
+  "description": "Premium travel design and safari concierge portal for custom African travel curations.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

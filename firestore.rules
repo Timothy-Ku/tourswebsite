@@ -146,5 +146,11 @@ service cloud.firestore {
       allow update: if isAdmin() && isValidAdmin(incoming()) && (incoming().email == existing().email || incoming().uid == existing().uid);
       allow delete: if isAdmin();
     }
+
+    // Dynamic config rules (specifically for sandbox redirect configurations)
+    match /config/sandbox {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
   }
 }
