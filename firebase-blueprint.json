@@ -79,6 +79,18 @@
         "dateSubmitted": { "type": "string", "maxLength": 30 }
       },
       "required": ["id", "name", "email"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "An authorized staff administrator login",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 150 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "addedBy": { "type": "string", "maxLength": 150 },
+        "dateAdded": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["email"]
     }
   },
   "firestore": {
@@ -97,6 +109,10 @@
     "enquiries/{enqId}": {
       "schema": "Enquiry",
       "description": "Collection of travel planner submissions"
+    },
+    "admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Collection of authorized administrator user logins"
     }
   }
 }

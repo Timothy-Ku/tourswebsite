@@ -88,15 +88,43 @@ export default function App() {
   // Firebase Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAdminUser, setIsAdminUser] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   // Auth Subscription
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
-      if (user && user.email === 'kungutim541@gmail.com') {
-        setIsAdminUser(true);
-      } else {
+      if (!user) {
         setIsAdminUser(false);
+        setIsAuthChecking(false);
+        return;
+      }
+      if (user.email === 'kungutim541@gmail.com') {
+        setIsAdminUser(true);
+        setIsAuthChecking(false);
+        return;
+      }
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        let isAuthorized = false;
+        if (user.email) {
+          const emailDoc = await getDoc(doc(db, 'admins', user.email));
+          if (emailDoc.exists()) {
+            isAuthorized = true;
+          }
+        }
+        if (!isAuthorized) {
+          const uidDoc = await getDoc(doc(db, 'admins', user.uid));
+          if (uidDoc.exists()) {
+            isAuthorized = true;
+          }
+        }
+        setIsAdminUser(isAuthorized);
+      } catch (err) {
+        console.error("Error verifying admin status:", err);
+        setIsAdminUser(false);
+      } finally {
+        setIsAuthChecking(false);
       }
     });
     return () => unsubscribe();
@@ -289,6 +317,18 @@ export default function App() {
 
   // Clean Separation: If this is the Internal Admin Portal, bypass visitor Navbar & Footer entirely
   if (route.page === 'admin') {
+    if (isAuthChecking) {
+      return (
+        <div className="min-h-screen bg-[#1C2421] flex flex-col items-center justify-center px-4 font-sans select-none">
+          <div className="text-center space-y-4">
+            <RefreshCw className="w-10 h-10 text-[#C5A880] animate-spin mx-auto" />
+            <h1 className="font-serif text-xl font-medium text-[#FAF7F2]">KAGZ Concierge Portal</h1>
+            <p className="text-stone-400 text-[10px] uppercase tracking-widest">Verifying staff credentials...</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex flex-col font-sans bg-[#FAF7F2]">
         <SEOUpdater currentHash={currentHash} />
@@ -2582,7 +2622,7 @@ function AdminDashboardView({
   isAdminUser
 }: AdminDashboardViewProps) {
   const [loginError, setLoginError] = useState('');
-  const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs'>('enquiries');
+  const [activeTab, setActiveTab] = useState<'enquiries' | 'destinations' | 'tours' | 'blogs' | 'admins'>('enquiries');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
   
@@ -2594,11 +2634,105 @@ function AdminDashboardView({
   const [editingTour, setEditingTour] = useState<any | null>(null);
   const [editingBlog, setEditingBlog] = useState<any | null>(null);
 
+  // Admin list state
+  const [adminsList, setAdminsList] = useState<any[]>([]);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [isAdminSubmitting, setIsAdminSubmitting] = useState(false);
+
+  // Subscribe to admins list if the current user is an admin and the admins tab is active
+  useEffect(() => {
+    if (activeTab === 'admins' && isAdminUser) {
+      const unsub = onSnapshot(collection(db, 'admins'), (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() });
+        });
+        setAdminsList(list);
+      }, (error) => {
+        console.error("Error subscribing to admins collection:", error);
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'admins');
+        } catch (e) {}
+      });
+      return () => unsub();
+    }
+  }, [activeTab, isAdminUser]);
+
+  const handleAddAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminEmail.trim()) return;
+    const email = newAdminEmail.trim().toLowerCase();
+    
+    // Validate email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
+    setIsAdminSubmitting(true);
+    try {
+      const adminDocRef = doc(db, 'admins', email);
+      await setDoc(adminDocRef, {
+        email,
+        addedBy: currentUser?.email || 'System',
+        dateAdded: new Date().toISOString().split('T')[0]
+      });
+      setNewAdminEmail('');
+      alert(`Authorized admin email added: ${email}`);
+    } catch (err) {
+      console.error("Failed to add admin:", err);
+      alert("Failed to add admin. Please check if you have sufficient permissions.");
+      try {
+        handleFirestoreError(err, OperationType.WRITE, `admins/${email}`);
+      } catch (e) {}
+    } finally {
+      setIsAdminSubmitting(false);
+    }
+  };
+
+  const handleDeleteAdmin = async (adminId: string, email: string) => {
+    if (email === 'kungutim541@gmail.com') {
+      alert("The super administrator cannot be removed.");
+      return;
+    }
+    if (confirm(`Revoke admin privileges for ${email}?`)) {
+      try {
+        await deleteDoc(doc(db, 'admins', adminId));
+        alert(`Privileges revoked for ${email}`);
+      } catch (err) {
+        console.error("Failed to delete admin:", err);
+        alert("Failed to revoke privileges. Please check permissions.");
+        try {
+          handleFirestoreError(err, OperationType.DELETE, `admins/${adminId}`);
+        } catch (e) {}
+      }
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     try {
       setLoginError('');
       const user = await loginWithGoogle();
-      if (user.email !== 'kungutim541@gmail.com') {
+      
+      let isAuthorized = user.email === 'kungutim541@gmail.com';
+      if (!isAuthorized) {
+        const { getDoc, doc } = await import('firebase/firestore');
+        if (user.email) {
+          const emailDoc = await getDoc(doc(db, 'admins', user.email));
+          if (emailDoc.exists()) {
+            isAuthorized = true;
+          }
+        }
+        if (!isAuthorized) {
+          const uidDoc = await getDoc(doc(db, 'admins', user.uid));
+          if (uidDoc.exists()) {
+            isAuthorized = true;
+          }
+        }
+      }
+
+      if (!isAuthorized) {
         setLoginError(`Authorized personnel only. "${user.email}" is not configured as an administrator.`);
         await logoutUser();
       }
@@ -2987,7 +3121,8 @@ function AdminDashboardView({
             { id: 'enquiries', label: 'Enquiries Log', icon: <FileText className="w-4 h-4" /> },
             { id: 'destinations', label: 'Destinations', icon: <MapPin className="w-4 h-4" /> },
             { id: 'tours', label: 'Experiences & Tours', icon: <Compass className="w-4 h-4" /> },
-            { id: 'blogs', label: 'Travel Guides', icon: <BookOpen className="w-4 h-4" /> }
+            { id: 'blogs', label: 'Travel Guides', icon: <BookOpen className="w-4 h-4" /> },
+            { id: 'admins', label: 'Manage Admins', icon: <ShieldCheck className="w-4 h-4" /> }
           ].map(tab => (
             <button
               key={tab.id}
@@ -3025,13 +3160,15 @@ function AdminDashboardView({
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleReset(activeTab)}
-              className="px-3.5 py-2 border border-stone-200 text-stone-500 hover:text-stone-900 hover:bg-stone-50 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Reset defaults</span>
-            </button>
+            {activeTab !== 'admins' && (
+              <button
+                onClick={() => handleReset(activeTab as any)}
+                className="px-3.5 py-2 border border-stone-200 text-stone-500 hover:text-stone-900 hover:bg-stone-50 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reset defaults</span>
+              </button>
+            )}
 
             {activeTab === 'destinations' && (
               <button
@@ -3813,6 +3950,105 @@ function AdminDashboardView({
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB: MANAGE ADMINS */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'admins' && (
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="bg-white border border-stone-200 p-6 shadow-sm">
+              <h2 className="font-serif text-xl font-bold text-stone-900 mb-2">Authorize New Staff Login</h2>
+              <p className="text-xs text-stone-500 mb-4">
+                Enter the Google/Gmail address of the staff member you want to grant full administrator privileges. 
+                They will be able to log in using Google Sign-In and perform all CMS management operations.
+              </p>
+              
+              <form onSubmit={handleAddAdmin} className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. staff.member@gmail.com"
+                  value={newAdminEmail}
+                  onChange={(e) => setNewAdminEmail(e.target.value)}
+                  className="flex-grow bg-[#FAF7F2] border border-stone-200 px-4 py-2.5 text-xs focus:outline-none focus:border-[#C5A880] rounded-none text-stone-900 placeholder-stone-400"
+                />
+                <button
+                  type="submit"
+                  disabled={isAdminSubmitting}
+                  className="px-6 py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-all rounded-none cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{isAdminSubmitting ? "Authorizing..." : "Authorize Login"}</span>
+                </button>
+              </form>
+            </div>
+
+            <div className="bg-white border border-stone-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-stone-100 flex justify-between items-center">
+                <div>
+                  <h2 className="font-serif text-lg font-bold text-stone-900">Configured Administrators</h2>
+                  <p className="text-[10px] text-stone-400 font-mono mt-0.5">Note: kungutim541@gmail.com is the permanent super administrator</p>
+                </div>
+                <span className="bg-stone-100 text-stone-600 font-bold text-[10px] px-2.5 py-1 uppercase tracking-wider rounded-full">
+                  Total: {adminsList.length + 1}
+                </span>
+              </div>
+
+              <div className="divide-y divide-stone-100">
+                {/* Super Admin - Read-only permanent entry */}
+                <div className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-[#C5A880]/15 text-[#C5A880] rounded-full">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-serif font-bold text-stone-900">kungutim541@gmail.com</span>
+                        <span className="bg-[#1C2421] text-[#C5A880] text-[8px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full">Super Admin</span>
+                      </div>
+                      <p className="text-[10px] text-stone-400 font-mono mt-0.5">Permanent system administrator</p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-stone-400 italic">Protected</span>
+                </div>
+
+                {/* DB Configured Admins */}
+                {adminsList.map((admin) => (
+                  <div key={admin.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-stone-50/30 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-stone-100 text-stone-600 rounded-full">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="font-serif font-bold text-stone-900">{admin.email}</span>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-stone-400 font-mono mt-0.5">
+                          <span>Authorized by: {admin.addedBy || 'System'}</span>
+                          <span>&bull;</span>
+                          <span>Date: {admin.dateAdded || 'N/A'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAdmin(admin.id, admin.email)}
+                      className="px-4 py-1.5 border border-stone-200 text-stone-500 hover:text-rose-600 hover:bg-stone-50 text-[10px] uppercase font-bold tracking-wider transition-all rounded-none cursor-pointer flex items-center gap-1 self-start sm:self-center"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Revoke Access</span>
+                    </button>
+                  </div>
+                ))}
+
+                {adminsList.length === 0 && (
+                  <div className="p-8 text-center text-stone-400 text-xs">
+                    No additional staff administrators configured. Logins are strictly limited to the super administrator.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

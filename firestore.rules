@@ -15,12 +15,24 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'kungutim541@gmail.com' ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email != null && exists(/databases/$(database)/documents/admins/$(request.auth.token.email)))
       );
     }
 
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidAdminId(id) {
+      return id is string && id.size() <= 150 && id.matches('^[a-zA-Z0-9_\\-\\.\\@]+$');
+    }
+
+    function isValidAdmin(data) {
+      return data.email is string && data.email.size() <= 150 &&
+             (!('uid' in data) || (data.uid is string && data.uid.size() <= 128)) &&
+             (!('addedBy' in data) || (data.addedBy is string && data.addedBy.size() <= 150)) &&
+             (!('dateAdded' in data) || (data.dateAdded is string && data.dateAdded.size() <= 30));
     }
 
     function incoming() {
@@ -130,7 +142,9 @@ service cloud.firestore {
     // Admins collection rules (optional meta lookup)
     match /admins/{adminId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create: if isAdmin() && isValidAdminId(adminId) && isValidAdmin(incoming()) && (incoming().email == adminId || incoming().uid == adminId);
+      allow update: if isAdmin() && isValidAdmin(incoming()) && (incoming().email == existing().email || incoming().uid == existing().uid);
+      allow delete: if isAdmin();
     }
   }
 }
