@@ -59,6 +59,7 @@ import {
   db, 
   auth, 
   loginWithGoogle, 
+  loginWithGoogleCredential,
   logoutUser, 
   handleFirestoreError, 
   OperationType 
@@ -90,6 +91,41 @@ export default function App() {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
+  // Handle incoming secure session token (from Sandbox Redirect Helper) on mount
+  useEffect(() => {
+    const handleAuthToken = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
+        const authToken = params.get('auth_token');
+        if (authToken) {
+          setIsAuthChecking(true);
+          console.log("Detecting secure session token, authenticating...");
+          await loginWithGoogleCredential(authToken);
+          
+          // Clean URL parameters to keep address bar pristine
+          const currentUrl = new URL(window.location.href);
+          currentUrl.searchParams.delete('auth_token');
+          if (window.location.hash.includes('auth_token')) {
+            const hashParts = window.location.hash.split('?');
+            if (hashParts[1]) {
+              const hashParams = new URLSearchParams(hashParts[1]);
+              hashParams.delete('auth_token');
+              const newHashParams = hashParams.toString();
+              window.location.hash = hashParts[0] + (newHashParams ? '?' + newHashParams : '');
+            }
+          }
+          window.history.replaceState({}, document.title, currentUrl.pathname + currentUrl.search);
+          console.log("Successfully logged in via secure token!");
+        }
+      } catch (err) {
+        console.error("Failed to authenticate secure session token:", err);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+    handleAuthToken();
+  }, []);
+
   // Auth Subscription
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -99,6 +135,23 @@ export default function App() {
         setIsAuthChecking(false);
         return;
       }
+
+      // Check if we need to redirect back to custom domain (Sandbox Redirect Helper)
+      const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
+      const redirectBack = params.get('redirect_back');
+      if (redirectBack) {
+        try {
+          setIsAuthChecking(true);
+          console.log("User is authenticated on sandbox, redirecting back to custom domain:", redirectBack);
+          const idToken = await user.getIdToken();
+          const separator = redirectBack.includes('?') ? '&' : '?';
+          window.location.href = `${redirectBack}${separator}auth_token=${encodeURIComponent(idToken)}`;
+          return;
+        } catch (err) {
+          console.error("Error redirecting back with token:", err);
+        }
+      }
+
       if (user.email === 'kungutim541@gmail.com') {
         setIsAdminUser(true);
         setIsAuthChecking(false);
@@ -2737,8 +2790,19 @@ function AdminDashboardView({
         await logoutUser();
       }
     } catch (err: any) {
-      setLoginError(err?.message || "Failed to authenticate with Google.");
+      console.error("Authentication error:", err);
+      if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+        setLoginError("This domain is not whitelisted in the Firebase sandbox project. Please use the 'Secure Google Sign-In via Sandbox' button below to log in.");
+      } else {
+        setLoginError(err?.message || "Failed to authenticate with Google.");
+      }
     }
+  };
+
+  const handleSandboxRedirect = () => {
+    const sandboxUrl = 'https://ais-pre-t4mo5zf2ef534igxlhlepj-281721718820.europe-west2.run.app';
+    const redirectUrl = `${sandboxUrl}/#/admin?redirect_back=${encodeURIComponent(window.location.origin + window.location.pathname)}`;
+    window.location.href = redirectUrl;
   };
 
   const handleLogout = async () => {
@@ -3019,6 +3083,10 @@ function AdminDashboardView({
   const isStaffAuthenticated = isAdminUser;
 
   if (!isStaffAuthenticated) {
+    const isCustomDomain = window.location.hostname !== 'localhost' && !window.location.hostname.endsWith('.run.app');
+    const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
+    const isRedirectingBack = params.has('redirect_back');
+
     return (
       <div className="min-h-screen bg-[#1C2421] flex items-center justify-center px-4 py-12 select-none font-sans">
         <div className="max-w-md w-full bg-white border border-[#EADCC9]/30 p-8 md:p-10 shadow-2xl text-center">
@@ -3028,8 +3096,40 @@ function AdminDashboardView({
           <h1 className="font-serif text-3xl font-bold text-[#1C2421] mb-2">KAGZ Concierge Portal</h1>
           <p className="text-stone-500 text-xs uppercase tracking-wider font-bold mb-6">Internal CMS Gatekeeper</p>
           
+          {isRedirectingBack && (
+            <div className="mb-6 p-4 bg-[#C5A880]/10 border border-[#C5A880]/30 rounded text-stone-850 text-xs text-left">
+              <p className="font-bold mb-1">🔑 Sandbox Authentication Active</p>
+              <p className="font-light text-stone-600">Once you complete Google Authentication on this secure sandbox domain, you will be redirected back to your live Vercel dashboard automatically.</p>
+            </div>
+          )}
+
           {/* Production-grade Google Authentication */}
-          <div className="mb-6 pb-2">
+          <div className="mb-6 pb-2 space-y-3">
+            {isCustomDomain ? (
+              <>
+                {/* Custom Vercel Redirect button (Recommended) */}
+                <button
+                  type="button"
+                  onClick={handleSandboxRedirect}
+                  className="w-full py-3.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2 border border-stone-800"
+                >
+                  <svg className="w-4 h-4 fill-current text-[#C5A880]" viewBox="0 0 24 24">
+                    <path d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
+                    <path d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
+                    <path d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
+                    <path d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
+                  </svg>
+                  <span>Sign in via Sandbox (Vercel Fix)</span>
+                </button>
+                <div className="flex items-center justify-between text-[10px] text-stone-400 font-bold uppercase py-2">
+                  <div className="h-px bg-stone-200 flex-grow mr-2"></div>
+                  <span>or try direct</span>
+                  <div className="h-px bg-stone-200 flex-grow ml-2"></div>
+                </div>
+              </>
+            ) : null}
+
+            {/* Direct Login Button */}
             <button
               type="button"
               onClick={handleGoogleSignIn}
@@ -3041,12 +3141,13 @@ function AdminDashboardView({
                 <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
                 <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
               </svg>
-              <span>Sign in with Google</span>
+              <span>{isCustomDomain ? 'Direct Sign-In with Google' : 'Sign in with Google'}</span>
             </button>
+
             <p className="text-[10px] text-stone-400 mt-3 font-mono">Authorized Administrator: kungutim541@gmail.com</p>
           </div>
 
-          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4">{loginError}</p>}
+          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed">{loginError}</p>}
 
           <button 
             onClick={() => onNavigate('#/')}

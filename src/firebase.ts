@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, signInWithCredential } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -34,6 +34,18 @@ export const loginWithGoogle = async () => {
     return result.user;
   } catch (error) {
     console.error("Error signing in with Google:", error);
+    throw error;
+  }
+};
+
+// Programmatic login with ID token (credential) - bypasses popup domain restrictions
+export const loginWithGoogleCredential = async (idToken: string) => {
+  try {
+    const credential = GoogleAuthProvider.credential(idToken);
+    const result = await signInWithCredential(auth, credential);
+    return result.user;
+  } catch (error) {
+    console.error("Error signing in with Google credential:", error);
     throw error;
   }
 };
