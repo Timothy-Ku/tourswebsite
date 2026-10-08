@@ -425,6 +425,21 @@ export interface EnquiryNote {
   text: string;
 }
 
+export interface EnquiryEmailRecord {
+  id: string;
+  senderName: string;
+  senderEmail: string;
+  recipientEmail: string;
+  recipientName: string;
+  subject: string;
+  body: string;
+  templateKey?: 'welcome' | 'proposal' | 'followup' | 'confirmation' | 'custom';
+  sentAt: string;
+  status: 'Delivered' | 'Sent' | 'Opened';
+  messageId: string;
+  deliveryReceipt?: string;
+}
+
 export interface Enquiry {
   id: string;
   name: string;
@@ -443,6 +458,7 @@ export interface Enquiry {
   budget?: string;
   source?: string;
   notes?: EnquiryNote[];
+  emails?: EnquiryEmailRecord[];
 }
 
 export const DEFAULT_ENQUIRIES: Enquiry[] = [
@@ -475,6 +491,22 @@ export const DEFAULT_ENQUIRIES: Enquiry[] = [
         author: "Timothy Kungu",
         date: "2026-10-07 10:15",
         text: "Checked Wilson Airport charter availability for direct flight to Keekorok Airstrip. Custom proposal drafted."
+      }
+    ],
+    emails: [
+      {
+        id: "msg-101",
+        senderName: "Timothy Kungu",
+        senderEmail: "kungutim541@gmail.com",
+        recipientName: "Lord Alistair & Lady Cynthia Montgomery",
+        recipientEmail: "montgomery.safaris@cotswolds.uk",
+        subject: "Your Bespoke East Africa Safari Expedition | KAGZ Travel & Safaris",
+        body: "Dear Lord Alistair & Lady Cynthia Montgomery,\n\nThank you for your enquiry with KAGZ Travel & Safaris regarding your upcoming journey to Kenya (Maasai Mara & Samburu) planned for August 2027.\n\nOur senior safari design team is reviewing your bespoke preferences for 2 guests (Ultra-Luxury Private Mobile Concessions). We would be delighted to schedule a brief private consultation call to discuss your wildlife priorities, preferred private conservancies, and bespoke aviation connections.\n\nWarmest safari regards,\nTimothy Kungu\nLead Safari Curator | KAGZ Travel & Safaris",
+        templateKey: "welcome",
+        sentAt: "2026-10-06 11:30 AM",
+        status: "Delivered",
+        messageId: "kagz-msg-1728392100-welcome",
+        deliveryReceipt: "250 2.0.0 OK (Delivered directly to client inbox via KAGZ Secure Mail Gateway)"
       }
     ]
   },

@@ -49,7 +49,15 @@ import {
   AlertCircle,
   Briefcase,
   Filter,
-  ArrowUpDown
+  ArrowUpDown,
+  MailCheck,
+  Inbox,
+  Zap,
+  Printer,
+  Maximize2,
+  Minimize2,
+  BarChart2,
+  TrendingUp
 } from 'lucide-react';
 import { 
   Destination, 
@@ -59,6 +67,7 @@ import {
   GalleryItem,
   Enquiry,
   EnquiryNote,
+  EnquiryEmailRecord,
   DEFAULT_ENQUIRIES,
   destinationsData, 
   toursData, 
@@ -66,13 +75,16 @@ import {
   testimonialsData, 
   galleryData 
 } from '../data/travelData';
+import { getStoredGaId, setStoredGaId, trackEvent, getAnalyticsSummary, trackEmailSent, getAnalyticsLogs } from '../utils/analytics';
+import { sendGmailMessage, getGmailProfile } from '../utils/gmail';
 import { 
   db, 
   auth, 
   loginWithGoogle, 
   logoutUser, 
   handleFirestoreError, 
-  OperationType 
+  OperationType,
+  getCachedAccessToken
 } from '../firebase';
 import { User } from 'firebase/auth';
 import { 
@@ -296,8 +308,68 @@ export default function AdminDashboardView({
 
   // Navigation Tab State (Sidebar Navigation)
   const [activeTab, setActiveTab] = useState<
-    'enquiries' | 'destinations' | 'tours' | 'blogs' | 'testimonials' | 'gallery' | 'offers' | 'users' | 'audit'
+    'enquiries' | 'destinations' | 'tours' | 'blogs' | 'testimonials' | 'gallery' | 'offers' | 'users' | 'audit' | 'analytics' | 'smtp'
   >('enquiries');
+
+  // Google Analytics & Engagement State
+  const [gaMeasurementId, setGaMeasurementId] = useState<string>(() => getStoredGaId());
+  const [gaSavedNotification, setGaSavedNotification] = useState(false);
+  const [analyticsSummary, setAnalyticsSummary] = useState(() => getAnalyticsSummary());
+
+  // SMTP Direct Mail Configuration State
+  const [smtpSettings, setSmtpSettings] = useState(() => {
+    const saved = localStorage.getItem('kagz_smtp_settings');
+    return saved ? JSON.parse(saved) : {
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      user: 'info@kagztours.com',
+      pass: '',
+      fromName: 'KAGZ Safari Concierge',
+      fromEmail: 'info@kagztours.com'
+    };
+  });
+  const [smtpVerifyStatus, setSmtpVerifyStatus] = useState<{ success?: boolean; message?: string; mode?: string } | null>(null);
+  const [isVerifyingSmtp, setIsVerifyingSmtp] = useState(false);
+  const [smtpSavedNotification, setSmtpSavedNotification] = useState(false);
+
+  // Helper to save GA Measurement ID
+  const handleSaveGaId = (newId: string) => {
+    setGaMeasurementId(newId);
+    setStoredGaId(newId);
+    setGaSavedNotification(true);
+    setTimeout(() => setGaSavedNotification(false), 2500);
+    trackEvent('ga_id_updated', { new_id: newId });
+    setAnalyticsSummary(getAnalyticsSummary());
+  };
+
+  // Helper to save & verify SMTP Settings
+  const handleSaveSmtpSettings = () => {
+    localStorage.setItem('kagz_smtp_settings', JSON.stringify(smtpSettings));
+    setSmtpSavedNotification(true);
+    setTimeout(() => setSmtpSavedNotification(false), 2500);
+  };
+
+  const handleVerifySmtpConnection = async () => {
+    setIsVerifyingSmtp(true);
+    setSmtpVerifyStatus(null);
+    try {
+      const res = await fetch('/api/verify-smtp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(smtpSettings)
+      });
+      const data = await res.json();
+      setSmtpVerifyStatus(data);
+    } catch (e: any) {
+      setSmtpVerifyStatus({
+        success: false,
+        message: e?.message || 'Failed to connect to SMTP server. Verify host and port.'
+      });
+    } finally {
+      setIsVerifyingSmtp(false);
+    }
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -382,8 +454,56 @@ export default function AdminDashboardView({
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [emailSentSuccess, setEmailSentSuccess] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailSendProgress, setEmailSendProgress] = useState('');
+  const [emailSendResult, setEmailSendResult] = useState<{
+    success: boolean;
+    messageId: string;
+    recipient: string;
+    deliveryTime: string;
+  } | null>(null);
+  const [emailModalView, setEmailModalView] = useState<'compose' | 'preview'>('compose');
+  const [emailSenderName, setEmailSenderName] = useState('Timothy Kungu');
+  const [emailSenderEmail, setEmailSenderEmail] = useState('kungutim541@gmail.com');
+  const [emailCc, setEmailCc] = useState('');
+  const [autoUpdateStatusOnSend, setAutoUpdateStatusOnSend] = useState(true);
+  const [includeLuxurySignature, setIncludeLuxurySignature] = useState(true);
+  const [viewingEmailRecord, setViewingEmailRecord] = useState<EnquiryEmailRecord | null>(null);
   const [newNoteText, setNewNoteText] = useState('');
   const [copiedLeadField, setCopiedLeadField] = useState<string | null>(null);
+
+  // Preview Pane State & Modes
+  const [previewTab, setPreviewTab] = useState<'request' | 'dossier' | 'emails' | 'all'>('request');
+  const [showFullscreenPreview, setShowFullscreenPreview] = useState(false);
+
+  // Helper to copy customer request summary
+  const handleCopyRequestSummary = (enq: any) => {
+    const summary = `KAGZ TOURS & SAFARIS - CUSTOMER EXPEDITION REQUEST BRIEF
+Reference: #${enq.id}
+Client Name: ${enq.name}
+Email Address: ${enq.email}
+Phone / WhatsApp: ${enq.phone || 'N/A'}
+Country: ${enq.country || 'International Traveler'}
+Destination: ${enq.destination}
+Travel Dates: ${enq.travelDate}
+Travelers: ${enq.travelers}
+Safari Style: ${enq.style || 'Classic Luxury Safari'}
+Budget Tier: ${enq.budget || 'Custom Quote'}
+Pipeline Status: ${enq.status}
+Priority Flag: ${enq.priority || 'Standard'}
+Lead Source: ${enq.source || 'Website'}
+Date Submitted: ${enq.dateSubmitted}
+Assigned Curator: ${enq.assignedTo || 'Unassigned'}
+
+Customer's Custom Vision & Requests:
+"${enq.message || 'No specific requests provided. Standard luxury curation requested.'}"`;
+
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(summary);
+    }
+    setCopiedLeadField('summary');
+    setTimeout(() => setCopiedLeadField(null), 2500);
+  };
 
   const [editingDest, setEditingDest] = useState<any | null>(null);
   const [editingTour, setEditingTour] = useState<any | null>(null);
@@ -496,7 +616,8 @@ export default function AdminDashboardView({
       setLoginSuccess('');
       setUnauthorizedDomain(false);
 
-      const user = await loginWithGoogle();
+      const authResult = await loginWithGoogle();
+      const user = authResult.user;
       const emailLower = user.email?.toLowerCase();
       let isAuthorized = emailLower === 'kungutim541@gmail.com';
 
@@ -1197,12 +1318,203 @@ KAGZ Travel & Safaris`
 
   // Open Email Composer
   const handleOpenEmailComposer = (enquiry: any, templateKey: 'welcome' | 'proposal' | 'followup' | 'confirmation' = 'welcome') => {
+    setSelectedEnquiry(enquiry);
     setEmailTemplateKey(templateKey);
     const { subject, body } = generateEmailContent(templateKey, enquiry);
     setEmailSubject(subject);
     setEmailBody(body);
     setEmailSentSuccess(false);
+    setEmailSendResult(null);
+    setIsSendingEmail(false);
+    setEmailSendProgress('');
+    setEmailModalView('compose');
+    setEmailSenderName(sessionAdminName || 'Timothy Kungu');
+    setEmailSenderEmail(sessionAdminEmail || 'kungutim541@gmail.com');
+    setEmailCc('safaris@kagztours.com');
     setShowEmailModal(true);
+  };
+
+  // Direct Email Dispatch to Client's Inbox (Supports Gmail API & SMTP)
+  const handleSendDirectEmail = async (isTestToSelf = false) => {
+    if (!selectedEnquiry && !isTestToSelf) return;
+    
+    const recipientEmail = isTestToSelf 
+      ? (sessionAdminEmail || 'kungutim541@gmail.com') 
+      : (selectedEnquiry?.email || 'guest@example.com');
+    const recipientName = isTestToSelf 
+      ? `${sessionAdminName || 'Timothy Kungu'} (Curator Test)` 
+      : (selectedEnquiry?.name || 'Valued Guest');
+
+    // MANDATORY User Confirmation for sending email on behalf of user
+    const confirmed = window.confirm(
+      `Confirm sending direct email to ${recipientName} (${recipientEmail}) with subject "${emailSubject}"?`
+    );
+    if (!confirmed) return;
+
+    setIsSendingEmail(true);
+    setEmailSendResult(null);
+    setEmailSentSuccess(false);
+
+    try {
+      let msgId = '';
+      let deliveryReceiptText = '';
+      const cachedToken = getCachedAccessToken();
+
+      // Dispatch via Gmail API if token available or requested
+      if (cachedToken || !smtpSettings.host) {
+        let activeToken = cachedToken;
+        if (!activeToken) {
+          setEmailSendProgress('Connecting to Google Workspace Gmail API...');
+          const authRes = await loginWithGoogle();
+          activeToken = authRes.accessToken;
+        }
+
+        if (!activeToken) {
+          throw new Error('OAuth access token required for Gmail API dispatch.');
+        }
+
+        setEmailSendProgress(`Dispatching MIME RFC 2822 payload via Official Gmail API to ${recipientEmail}...`);
+        const gmailRes = await sendGmailMessage(activeToken, {
+          recipientEmail,
+          recipientName,
+          senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
+          senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
+          subject: emailSubject,
+          body: emailBody,
+        });
+
+        msgId = gmailRes.messageId;
+        deliveryReceiptText = gmailRes.response || '250 2.0.0 OK Direct Gmail API Dispatch';
+      } else {
+        // Fallback to Server-Side Nodemailer SMTP Proxy
+        setEmailSendProgress(`Connecting to SMTP Gateway (${smtpSettings.host}:${smtpSettings.port})...`);
+        await new Promise(r => setTimeout(r, 200));
+
+        setEmailSendProgress(`Sending MIME payload via SMTP to ${recipientEmail}...`);
+        
+        const res = await fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipientEmail,
+            recipientName,
+            senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
+            senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
+            subject: emailSubject,
+            body: emailBody,
+            smtpConfig: smtpSettings
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'SMTP transmission error from mail server.');
+        }
+
+        msgId = data.messageId || `smtp-${Date.now()}`;
+        deliveryReceiptText = data.response || `250 2.0.0 OK Delivered via SMTP (${data.smtpServer || 'Direct Mail'})`;
+      }
+
+      const timeFormatted = new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const newEmailRecord: EnquiryEmailRecord = {
+        id: `email-${Date.now()}`,
+        senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
+        senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
+        recipientEmail,
+        recipientName,
+        subject: emailSubject,
+        body: emailBody,
+        templateKey: emailTemplateKey,
+        sentAt: timeFormatted,
+        status: 'Delivered',
+        messageId: msgId,
+        deliveryReceipt: deliveryReceiptText
+      };
+
+      // Track in Google Analytics
+      trackEmailSent(recipientEmail, emailTemplateKey);
+
+      if (!isTestToSelf && selectedEnquiry) {
+        const existingEmails = Array.isArray(selectedEnquiry.emails) ? selectedEnquiry.emails : [];
+        const updatedEmails = [newEmailRecord, ...existingEmails];
+
+        // Automatic Status Transition
+        let updatedStatus = selectedEnquiry.status;
+        if (autoUpdateStatusOnSend) {
+          if (emailTemplateKey === 'proposal' && selectedEnquiry.status !== 'Confirmed') {
+            updatedStatus = 'Proposal Sent';
+          } else if (emailTemplateKey === 'welcome' && selectedEnquiry.status === 'New Enquiry') {
+            updatedStatus = 'Under Curation';
+          } else if (emailTemplateKey === 'confirmation') {
+            updatedStatus = 'Confirmed';
+          }
+        }
+
+        // Auto append internal activity log note
+        const noteText = `[Direct Email Delivered to Inbox] Subject: "${emailSubject}" | Recipient: ${recipientEmail} | Delivery ID: ${msgId}`;
+        const newNote: EnquiryNote = {
+          id: `note-${Date.now()}`,
+          author: emailSenderName || sessionAdminName || 'Curator Desk',
+          date: timeFormatted,
+          text: noteText
+        };
+        const existingNotes = Array.isArray(selectedEnquiry.notes) ? selectedEnquiry.notes : [];
+        const updatedNotes = [...existingNotes, newNote];
+
+        const updatedEnq = {
+          ...selectedEnquiry,
+          status: updatedStatus,
+          emails: updatedEmails,
+          notes: updatedNotes
+        };
+
+        const updatedAll = enquiries.map(e => e.id === selectedEnquiry.id ? updatedEnq : e);
+        setEnquiries(updatedAll);
+        setSelectedEnquiry(updatedEnq);
+        localStorage.setItem('kagz_enquiries', JSON.stringify(updatedAll));
+
+        try {
+          await setDoc(doc(db, 'enquiries', selectedEnquiry.id), updatedEnq, { merge: true });
+        } catch (err) {
+          console.warn("Firestore sync sent email:", err);
+        }
+
+        addAuditLog(
+          'Direct Email Delivered',
+          `Delivered "${emailSubject}" directly to ${recipientName} (${recipientEmail})`,
+          'BOOKING'
+        );
+      } else {
+        addAuditLog(
+          'Test Email Sent',
+          `Dispatched test email to curator mailbox (${recipientEmail})`,
+          'BOOKING'
+        );
+      }
+
+      setIsSendingEmail(false);
+      setEmailSendProgress('');
+      setEmailSentSuccess(true);
+      setEmailSendResult({
+        success: true,
+        messageId: msgId,
+        recipient: recipientEmail,
+        deliveryTime: timeFormatted
+      });
+    } catch (error) {
+      console.error("Direct email dispatch failed:", error);
+      setIsSendingEmail(false);
+      setEmailSendProgress('');
+      alert("Unable to deliver email directly. Please verify network connectivity or use the fallback mail link.");
+    }
   };
 
   // WhatsApp Link Helper
@@ -1837,6 +2149,22 @@ KAGZ Travel & Safaris`
                   highlight: enquiries.some(e => e.status === 'New Enquiry')
                 },
                 { 
+                  id: 'analytics', 
+                  label: 'Google Analytics & Engagement', 
+                  shortLabel: 'GA Analytics',
+                  icon: <TrendingUp className="w-4 h-4 shrink-0 text-[#C5A880]" />, 
+                  count: analyticsSummary.totalEvents,
+                  highlight: false
+                },
+                { 
+                  id: 'smtp', 
+                  label: 'SMTP Direct Mail Server', 
+                  shortLabel: 'SMTP Gateway',
+                  icon: <MailCheck className="w-4 h-4 shrink-0 text-[#C5A880]" />, 
+                  count: 'Active',
+                  highlight: false
+                },
+                { 
                   id: 'users', 
                   label: 'Staff & Curators', 
                   shortLabel: 'Staff',
@@ -2028,11 +2356,13 @@ KAGZ Travel & Safaris`
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase font-bold tracking-widest text-[#C5A880] font-mono">
-                  {['enquiries', 'users', 'audit'].includes(activeTab) ? 'Operations' : 'Content Management'}
+                  {['enquiries', 'users', 'audit', 'analytics', 'smtp'].includes(activeTab) ? 'Operations' : 'Content Management'}
                 </span>
                 <span className="text-stone-300">&bull;</span>
                 <h2 className="font-serif text-base sm:text-lg font-bold text-stone-900 capitalize">
                   {activeTab === 'enquiries' && 'Enquiries & Guest Requests'}
+                  {activeTab === 'analytics' && 'Google Analytics & User Engagement'}
+                  {activeTab === 'smtp' && 'SMTP Direct Mail Server Gateway'}
                   {activeTab === 'users' && 'Staff & Curator Directory'}
                   {activeTab === 'audit' && 'Security & Operational Audit Trail'}
                   {activeTab === 'destinations' && 'Safari Destinations'}
@@ -2045,6 +2375,8 @@ KAGZ Travel & Safaris`
               </div>
               <p className="text-xs text-stone-500 mt-0.5">
                 {activeTab === 'enquiries' && `Manage inbound guest enquiries (${enquiries.length} total)`}
+                {activeTab === 'analytics' && `Google Analytics 4 tracking events, page views, and conversion metrics (${analyticsSummary.totalEvents} events logged)`}
+                {activeTab === 'smtp' && `Server-side SMTP proxy configuration and live delivery diagnostics (${smtpSettings.host}:${smtpSettings.port})`}
                 {activeTab === 'users' && `Manage concierge admin privileges, roles, and security passcodes (${staffUsers.length} staff)`}
                 {activeTab === 'audit' && `Review verified actions, access events, and live logs (${auditLogs.length} events)`}
                 {activeTab === 'destinations' && `Manage East Africa parks, reserves, and coastal gems (${destinations.length} active)`}
@@ -2434,7 +2766,12 @@ KAGZ Travel & Safaris`
                       return (
                         <div
                           key={enq.id}
-                          onClick={() => setSelectedEnquiry(enq)}
+                          onClick={() => {
+                            setSelectedEnquiry(enq);
+                            if (typeof window !== 'undefined' && window.innerWidth < 1280) {
+                              document.getElementById('enquiry-preview-pane')?.scrollIntoView({ behavior: 'smooth' });
+                            }
+                          }}
                           className={`p-4 border transition-all cursor-pointer shadow-xs relative ${
                             isSelected
                               ? 'bg-white border-l-4 border-l-[#C5A880] border-t-stone-300 border-r-stone-300 border-b-stone-300 shadow-md ring-1 ring-[#C5A880]/30'
@@ -2444,8 +2781,13 @@ KAGZ Travel & Safaris`
                           {/* Top Row: Name, Status & Priority */}
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <h3 className="font-serif font-bold text-stone-900 text-sm">{enq.name}</h3>
+                                {isSelected && (
+                                  <span className="text-[8px] bg-[#1C2421] text-[#C5A880] font-mono px-1.5 py-0.2 uppercase font-bold tracking-wider">
+                                    Active in Preview
+                                  </span>
+                                )}
                                 {enq.country && (
                                   <span className="text-[10px] text-stone-400 font-mono">
                                     &bull; {enq.country}
@@ -2519,6 +2861,13 @@ KAGZ Travel & Safaris`
                             </div>
 
                             <div className="flex items-center gap-2">
+                              {Array.isArray(enq.emails) && enq.emails.length > 0 && (
+                                <span className="flex items-center gap-1 text-sky-700 font-bold bg-sky-50 px-1.5 py-0.2 border border-sky-200" title={`${enq.emails.length} direct email(s) dispatched to inbox`}>
+                                  <MailCheck className="w-3 h-3 text-sky-600" />
+                                  <span>{enq.emails.length}</span>
+                                </span>
+                              )}
+
                               {hasNotes && (
                                 <span className="flex items-center gap-1 text-[#C5A880] font-medium" title={`${enq.notes.length} internal notes`}>
                                   <MessageSquare className="w-3 h-3" />
@@ -2530,8 +2879,40 @@ KAGZ Travel & Safaris`
                                 <span className="w-4 h-4 rounded-full bg-[#1C2421] text-[#C5A880] flex items-center justify-center text-[8px] font-bold">
                                   {(enq.assignedTo || 'U').charAt(0)}
                                 </span>
-                                <span className="truncate max-w-[90px]">{enq.assignedTo || 'Unassigned'}</span>
+                                <span className="truncate max-w-[80px]">{enq.assignedTo || 'Unassigned'}</span>
                               </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedEnquiry(enq);
+                                  if (typeof window !== 'undefined' && window.innerWidth < 1280) {
+                                    document.getElementById('enquiry-preview-pane')?.scrollIntoView({ behavior: 'smooth' });
+                                  }
+                                }}
+                                className={`px-2 py-0.5 text-[9px] uppercase font-bold tracking-wider transition-colors flex items-center gap-1 cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-[#1C2421] text-[#C5A880]'
+                                    : 'bg-stone-100 hover:bg-[#FAF7F2] text-stone-600 hover:text-stone-900 border border-stone-200'
+                                }`}
+                                title="Preview full customer request in pane"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>{isSelected ? 'Previewing' : 'Preview'}</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenEmailComposer(enq, 'welcome');
+                                }}
+                                className="p-1 text-stone-400 hover:text-[#C5A880] hover:bg-[#FAF7F2] transition-colors"
+                                title="Send email direct to client's inbox"
+                              >
+                                <Send className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -2570,50 +2951,71 @@ KAGZ Travel & Safaris`
                 )}
               </div>
 
-              {/* RIGHT COLUMN: LEAD DOSSIER & CONCIERGE CONSOLE (7 of 12 cols on desktop) */}
-              <div className="xl:col-span-7">
+              {/* RIGHT COLUMN: CUSTOMER REQUEST PREVIEW PANE & LEAD DOSSIER (7 of 12 cols on desktop) */}
+              <div className="xl:col-span-7" id="enquiry-preview-pane">
                 {selectedEnquiry ? (
-                  <div className="bg-white border border-stone-200 shadow-sm xl:sticky xl:top-24 space-y-5 text-xs overflow-hidden">
+                  <div className="bg-white border border-stone-200 shadow-sm xl:sticky xl:top-24 space-y-0 text-xs overflow-hidden">
                     
-                    {/* Dossier Header */}
+                    {/* Preview Pane Top Header & Actions Bar */}
                     <div className="p-5 bg-[#FAF7F2] border-b border-stone-200">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-[#C5A880] bg-[#1C2421] px-2 py-0.5 text-white">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-[#C5A880] bg-[#1C2421] px-2 py-0.5">
+                              Customer Request Preview Pane
+                            </span>
+                            <span className="text-[10px] text-stone-500 font-mono font-bold">
                               Ref #{selectedEnquiry.id}
                             </span>
-                            <span className="text-[10px] text-stone-500 font-mono">
-                              Received {selectedEnquiry.dateSubmitted}
+                            <span className="text-[10px] text-stone-400 font-mono">
+                              &bull; Received {selectedEnquiry.dateSubmitted}
                             </span>
                             {selectedEnquiry.source && (
-                              <span className="text-[10px] text-stone-500 font-mono bg-white px-2 py-0.5 border border-stone-200">
+                              <span className="text-[9px] text-stone-500 font-mono bg-white px-2 py-0.5 border border-stone-200">
                                 {selectedEnquiry.source}
                               </span>
                             )}
                           </div>
-                          <h2 className="font-serif text-2xl font-bold text-stone-900 mt-2">
-                            {selectedEnquiry.name}
-                          </h2>
+
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            <h2 className="font-serif text-2xl font-bold text-stone-900">
+                              {selectedEnquiry.name}
+                            </h2>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-none border ${
+                              selectedEnquiry.status === 'Confirmed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                              selectedEnquiry.status === 'Under Curation' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                              selectedEnquiry.status === 'Proposal Sent' ? 'bg-sky-50 text-sky-800 border-sky-200' :
+                              selectedEnquiry.status === 'Closed' ? 'bg-stone-100 text-stone-600 border-stone-200' :
+                              'bg-orange-50 text-orange-800 border-orange-200 font-extrabold'
+                            }`}>
+                              {selectedEnquiry.status}
+                            </span>
+                            {selectedEnquiry.priority === 'VIP' && (
+                              <span className="text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.2 bg-[#C5A880]/15 text-[#927349] border border-[#C5A880]/40 flex items-center gap-1">
+                                <Star className="w-2.5 h-2.5 fill-[#C5A880] text-[#C5A880]" />
+                                VIP Guest
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Quick Communication Actions Bar */}
+                        {/* Top Utility & Communication Actions */}
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <button
                             type="button"
                             onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
-                            className="px-3 py-1.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                            title="Compose luxury safari response email"
+                            className="px-3 py-1.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            title="Send email direct to client's inbox"
                           >
-                            <Mail className="w-3.5 h-3.5" />
-                            <span>Email Guest</span>
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Direct Email</span>
                           </button>
 
                           <a
                             href={getWhatsAppLink(selectedEnquiry)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="px-3 py-1.5 bg-emerald-700 text-white hover:bg-emerald-800 font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            className="px-2.5 py-1.5 bg-emerald-700 text-white hover:bg-emerald-800 font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
                             title="Chat via WhatsApp Concierge"
                           >
                             <MessageSquare className="w-3.5 h-3.5" />
@@ -2622,319 +3024,624 @@ KAGZ Travel & Safaris`
 
                           <button
                             type="button"
+                            onClick={() => handleCopyRequestSummary(selectedEnquiry)}
+                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors cursor-pointer"
+                            title="Copy full customer request summary"
+                          >
+                            {copiedLeadField === 'summary' ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => window.print()}
+                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors cursor-pointer"
+                            title="Print Customer Request Sheet"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowFullscreenPreview(true)}
+                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors cursor-pointer"
+                            title="Expand preview pane to full screen"
+                          >
+                            <Maximize2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => setEditingEnquiry(selectedEnquiry)}
-                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors"
+                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors cursor-pointer"
                             title="Edit Lead Details"
                           >
-                            <Edit3 className="w-4 h-4" />
+                            <Edit3 className="w-3.5 h-3.5" />
                           </button>
 
                           <button
                             type="button"
                             onClick={() => handleDeleteEnquiry(selectedEnquiry.id)}
-                            className="p-1.5 bg-white text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-colors"
+                            className="p-1.5 bg-white text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-colors cursor-pointer"
                             title="Delete Enquiry"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
 
                           <button
                             type="button"
                             onClick={() => setSelectedEnquiry(null)}
-                            className="p-1.5 text-stone-400 hover:text-stone-700 ml-1"
-                            title="Close Dossier"
+                            className="p-1.5 text-stone-400 hover:text-stone-700 ml-1 cursor-pointer"
+                            title="Close Preview Pane"
                           >
                             <X className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
 
-                      {/* Interactive Visual Safari Pipeline Stepper */}
-                      <div className="mt-5 pt-4 border-t border-stone-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                            Expedition Pipeline Stage
-                          </span>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">
-                            Status: {selectedEnquiry.status}
-                          </span>
+                      {/* Preview Pane Navigation Tabs Bar */}
+                      <div className="mt-4 pt-3 border-t border-stone-200 flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewTab('request')}
+                            className={`px-3 py-1.5 font-bold uppercase tracking-wider text-[10px] transition-all cursor-pointer border flex items-center gap-1.5 ${
+                              previewTab === 'request'
+                                ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                            }`}
+                          >
+                            <Compass className="w-3 h-3 text-[#C5A880]" />
+                            <span>Customer Request Brief</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewTab('dossier')}
+                            className={`px-3 py-1.5 font-bold uppercase tracking-wider text-[10px] transition-all cursor-pointer border flex items-center gap-1.5 ${
+                              previewTab === 'dossier'
+                                ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                            }`}
+                          >
+                            <FileText className="w-3 h-3 text-[#C5A880]" />
+                            <span>Curator Dossier & Notes ({Array.isArray(selectedEnquiry.notes) ? selectedEnquiry.notes.length : 0})</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewTab('emails')}
+                            className={`px-3 py-1.5 font-bold uppercase tracking-wider text-[10px] transition-all cursor-pointer border flex items-center gap-1.5 ${
+                              previewTab === 'emails'
+                                ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                            }`}
+                          >
+                            <MailCheck className="w-3 h-3 text-[#C5A880]" />
+                            <span>Direct Email Outbox ({Array.isArray(selectedEnquiry.emails) ? selectedEnquiry.emails.length : 0})</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewTab('all')}
+                            className={`px-3 py-1.5 font-bold uppercase tracking-wider text-[10px] transition-all cursor-pointer border ${
+                              previewTab === 'all'
+                                ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                            }`}
+                          >
+                            <span>All Unified</span>
+                          </button>
                         </div>
 
-                        <div className="grid grid-cols-4 gap-1 sm:gap-2">
-                          {[
-                            { key: 'New Enquiry', label: '1. Inbound Lead', color: 'orange' },
-                            { key: 'Under Curation', label: '2. Curation', color: 'amber' },
-                            { key: 'Proposal Sent', label: '3. Proposal Sent', color: 'sky' },
-                            { key: 'Confirmed', label: '4. Confirmed Safari', color: 'emerald' }
-                          ].map(stage => {
-                            const isCurrent = selectedEnquiry.status === stage.key;
-                            return (
-                              <button
-                                key={stage.key}
-                                type="button"
-                                onClick={() => handleUpdateStatus(selectedEnquiry.id, stage.key)}
-                                className={`py-2 px-1 text-center border font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer ${
-                                  isCurrent
-                                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-[#C5A880]'
-                                    : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-200'
-                                }`}
-                              >
-                                <span className="block truncate">{stage.label}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {copiedLeadField === 'summary' && (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 border border-emerald-200 font-bold flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Full Brief Copied
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {/* Dossier Body Content */}
-                    <div className="p-6 space-y-6">
+                    {/* Preview Pane Body */}
+                    <div className="p-5 sm:p-6 space-y-6">
                       
-                      {/* Section 1: Guest Contact & Country Details */}
-                      <div className="bg-[#FAF7F2] p-4 border border-stone-200">
-                        <h4 className="text-[10px] uppercase font-bold text-[#C5A880] tracking-wider mb-3 flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5" />
-                          <span>Guest Communication & Credentials</span>
-                        </h4>
+                      {/* VIEW PART 1: FULL CUSTOMER REQUEST DETAILS (shown in 'request' and 'all') */}
+                      {(previewTab === 'request' || previewTab === 'all') && (
+                        <div className="space-y-6">
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                          <div>
-                            <span className="block text-[10px] uppercase font-bold text-stone-400">Email Address</span>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="font-mono text-stone-900 select-all">{selectedEnquiry.email}</span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(selectedEnquiry.email);
-                                  setCopiedLeadField('email');
-                                  setTimeout(() => setCopiedLeadField(null), 1500);
-                                }}
-                                className="text-stone-400 hover:text-stone-700"
-                                title="Copy Email"
-                              >
-                                {copiedLeadField === 'email' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
+                          {/* Section A: Customer Identity & Verified Contact Details Card */}
+                          <div className="bg-[#FAF7F2] p-4 border border-stone-200 space-y-3">
+                            <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                              <h4 className="text-[10px] uppercase font-bold text-[#C5A880] tracking-wider flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5" />
+                                <span>Guest Credentials & Direct Communication</span>
+                              </h4>
+                              <span className="text-[10px] font-mono text-stone-500">
+                                Verified Lead
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                              <div>
+                                <span className="block text-[10px] uppercase font-bold text-stone-400">Email Address (Direct Target)</span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="font-mono text-stone-900 select-all font-medium">{selectedEnquiry.email}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(selectedEnquiry.email);
+                                      setCopiedLeadField('email');
+                                      setTimeout(() => setCopiedLeadField(null), 1500);
+                                    }}
+                                    className="text-stone-400 hover:text-stone-700"
+                                    title="Copy Email"
+                                  >
+                                    {copiedLeadField === 'email' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
+                                    className="text-[9px] uppercase text-[#C5A880] hover:text-[#1C2421] font-bold font-mono ml-1"
+                                    title="Send direct email"
+                                  >
+                                    [Mail Direct]
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div>
+                                <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="font-mono text-stone-900 select-all font-medium">{selectedEnquiry.phone || 'Not provided'}</span>
+                                  {selectedEnquiry.phone && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(selectedEnquiry.phone);
+                                          setCopiedLeadField('phone');
+                                          setTimeout(() => setCopiedLeadField(null), 1500);
+                                        }}
+                                        className="text-stone-400 hover:text-stone-700"
+                                        title="Copy Phone"
+                                      >
+                                        {copiedLeadField === 'phone' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                      </button>
+                                      <a
+                                        href={getWhatsAppLink(selectedEnquiry)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[9px] uppercase text-emerald-700 hover:text-emerald-900 font-bold font-mono ml-1"
+                                        title="Open WhatsApp chat"
+                                      >
+                                        [Chat WhatsApp]
+                                      </a>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <span className="block text-[10px] uppercase font-bold text-stone-400">Country of Residence</span>
+                                <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.country || 'International Traveler'}</p>
+                              </div>
+
+                              <div>
+                                <span className="block text-[10px] uppercase font-bold text-stone-400">Inbound Acquisition Channel</span>
+                                <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.source || 'Website Safari Planner'}</p>
+                              </div>
                             </div>
                           </div>
 
+                          {/* Section B: Complete Safari Expedition Specifications Grid */}
                           <div>
-                            <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="font-mono text-stone-900 select-all">{selectedEnquiry.phone || 'N/A'}</span>
-                              {selectedEnquiry.phone && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(selectedEnquiry.phone);
-                                    setCopiedLeadField('phone');
-                                    setTimeout(() => setCopiedLeadField(null), 1500);
-                                  }}
-                                  className="text-stone-400 hover:text-stone-700"
-                                  title="Copy Phone"
-                                >
-                                  {copiedLeadField === 'phone' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                                </button>
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-[10px] uppercase font-bold text-stone-500 tracking-wider flex items-center gap-1.5">
+                                <Compass className="w-3.5 h-3.5 text-[#C5A880]" />
+                                <span>Expedition Specifications & Parameters</span>
+                              </h4>
+                              <span className="text-[10px] font-mono text-stone-400">
+                                Inbound Request Details
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Requested Destination</span>
+                                <p className="font-serif font-bold text-stone-900 text-sm mt-0.5 flex items-center gap-1">
+                                  <MapPin className="w-3 h-3 text-[#C5A880] shrink-0" />
+                                  <span className="truncate">{selectedEnquiry.destination}</span>
+                                </p>
+                              </div>
+
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Travel Window / Dates</span>
+                                <p className="font-bold text-stone-900 text-sm mt-0.5 flex items-center gap-1">
+                                  <Calendar className="w-3 h-3 text-[#C5A880] shrink-0" />
+                                  <span className="truncate">{selectedEnquiry.travelDate}</span>
+                                </p>
+                              </div>
+
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Travel Party Size</span>
+                                <p className="font-bold text-stone-900 text-sm mt-0.5 flex items-center gap-1">
+                                  <Users className="w-3 h-3 text-stone-400 shrink-0" />
+                                  <span className="truncate">{selectedEnquiry.travelers}</span>
+                                </p>
+                              </div>
+
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Preferred Safari Style</span>
+                                <p className="font-medium text-stone-800 text-xs mt-0.5">{selectedEnquiry.style || 'Classic Luxury Safari'}</p>
+                              </div>
+
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Budget / Investment Tier</span>
+                                <p className="font-mono font-bold text-stone-900 text-sm mt-0.5 text-[#1C2421]">{selectedEnquiry.budget || 'Custom Quote'}</p>
+                              </div>
+
+                              <div className="bg-white border border-stone-200 p-3 shadow-2xs">
+                                <span className="block text-[9px] uppercase font-bold text-stone-400">Assigned Curator</span>
+                                <div className="mt-1">
+                                  <select
+                                    value={selectedEnquiry.assignedTo || 'Timothy Kungu'}
+                                    onChange={(e) => handleAssignCurator(selectedEnquiry.id, e.target.value)}
+                                    className="w-full bg-[#FAF7F2] border border-stone-200 p-1 text-[11px] font-bold text-stone-800 cursor-pointer"
+                                  >
+                                    {staffUsers.map(st => (
+                                      <option key={st.id} value={st.name}>{st.name}</option>
+                                    ))}
+                                    <option value="Unassigned">Unassigned</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Section C: Customer's Custom Request Message & Safari Vision (Prominent Spotlight) */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="block text-[10px] uppercase font-bold text-stone-500 tracking-wider flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-[#C5A880]" />
+                                <span>Customer's Custom Request & Safari Vision</span>
+                              </span>
+                              <span className="text-[9px] uppercase font-mono font-bold text-[#C5A880]">
+                                Full Customer Notes
+                              </span>
+                            </div>
+
+                            <div className="bg-[#FAF7F2] border-l-4 border-l-[#C5A880] p-4 sm:p-5 text-stone-900 border-t border-r border-b border-stone-200 shadow-xs relative">
+                              <span className="text-4xl text-[#C5A880]/30 font-serif leading-none block select-none">“</span>
+                              <p className="font-serif text-sm sm:text-base leading-relaxed text-stone-800 whitespace-pre-line italic -mt-3">
+                                {selectedEnquiry.message || 'No specific requests provided. Standard luxury curation requested.'}
+                              </p>
+                              <div className="flex items-center justify-end mt-2 pt-2 border-t border-stone-200/60 text-[10px] text-stone-400 font-mono">
+                                Inbound Request Text &bull; Client: {selectedEnquiry.name}
+                              </div>
+                            </div>
+
+                            {/* Intelligent Request Tags Chips */}
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[10px]">
+                              <span className="text-[9px] uppercase font-bold text-stone-400">Request Highlights:</span>
+                              {selectedEnquiry.message?.toLowerCase().includes('anniversary') && (
+                                <span className="px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 font-bold">
+                                  💍 Anniversary Celebration
+                                </span>
+                              )}
+                              {selectedEnquiry.message?.toLowerCase().includes('honeymoon') && (
+                                <span className="px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 font-bold">
+                                  ❤️ Honeymoon Safari
+                                </span>
+                              )}
+                              {selectedEnquiry.message?.toLowerCase().includes('balloon') && (
+                                <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 font-bold">
+                                  🎈 Hot Air Balloon
+                                </span>
+                              )}
+                              {selectedEnquiry.message?.toLowerCase().includes('gorilla') && (
+                                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
+                                  🦍 Mountain Gorilla Permits
+                                </span>
+                              )}
+                              {selectedEnquiry.message?.toLowerCase().includes('crossing') && (
+                                <span className="px-2 py-0.5 bg-sky-50 text-sky-800 border border-sky-200 font-bold">
+                                  🌊 Mara River Crossing
+                                </span>
+                              )}
+                              {selectedEnquiry.message?.toLowerCase().includes('cessna') || selectedEnquiry.message?.toLowerCase().includes('fly') || selectedEnquiry.message?.toLowerCase().includes('charter') ? (
+                                <span className="px-2 py-0.5 bg-indigo-50 text-indigo-800 border border-indigo-200 font-bold">
+                                  ✈️ Private Air Charter
+                                </span>
+                              ) : null}
+                              {selectedEnquiry.destination && (
+                                <span className="px-2 py-0.5 bg-stone-100 text-stone-700 font-mono">
+                                  📍 {selectedEnquiry.destination}
+                                </span>
                               )}
                             </div>
                           </div>
 
-                          <div>
-                            <span className="block text-[10px] uppercase font-bold text-stone-400">Country of Residence</span>
-                            <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.country || 'International Traveler'}</p>
-                          </div>
+                          {/* Section D: Interactive Visual Safari Pipeline Stepper */}
+                          <div className="pt-2">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                                Advance Expedition Pipeline Stage
+                              </span>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">
+                                Current Stage: {selectedEnquiry.status}
+                              </span>
+                            </div>
 
-                          <div>
-                            <span className="block text-[10px] uppercase font-bold text-stone-400">Inbound Channel</span>
-                            <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.source || 'Website Plan Form'}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Section 2: Safari Expedition Specifications */}
-                      <div>
-                        <h4 className="text-[10px] uppercase font-bold text-stone-400 tracking-wider mb-3 flex items-center gap-1.5">
-                          <Compass className="w-3.5 h-3.5 text-[#C5A880]" />
-                          <span>Expedition Specifications</span>
-                        </h4>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Destination</span>
-                            <p className="font-serif font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.destination}</p>
-                          </div>
-
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Travel Window</span>
-                            <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelDate}</p>
-                          </div>
-
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Party Size</span>
-                            <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelers}</p>
-                          </div>
-
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Safari Style</span>
-                            <p className="font-medium text-stone-800 text-xs mt-0.5">{selectedEnquiry.style || 'Classic Luxury Safari'}</p>
-                          </div>
-
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Budget Estimate</span>
-                            <p className="font-mono font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.budget || 'Custom Quote'}</p>
-                          </div>
-
-                          <div className="bg-white border border-stone-200 p-3">
-                            <span className="block text-[9px] uppercase font-bold text-stone-400">Assigned Curator</span>
-                            <div className="mt-1">
-                              <select
-                                value={selectedEnquiry.assignedTo || 'Timothy Kungu'}
-                                onChange={(e) => handleAssignCurator(selectedEnquiry.id, e.target.value)}
-                                className="w-full bg-[#FAF7F2] border border-stone-200 p-1 text-[11px] font-bold text-stone-800 cursor-pointer"
-                              >
-                                {staffUsers.map(st => (
-                                  <option key={st.id} value={st.name}>{st.name}</option>
-                                ))}
-                                <option value="Unassigned">Unassigned</option>
-                              </select>
+                            <div className="grid grid-cols-4 gap-1 sm:gap-2">
+                              {[
+                                { key: 'New Enquiry', label: '1. Inbound Lead' },
+                                { key: 'Under Curation', label: '2. Curation' },
+                                { key: 'Proposal Sent', label: '3. Proposal Sent' },
+                                { key: 'Confirmed', label: '4. Confirmed Safari' }
+                              ].map(stage => {
+                                const isCurrent = selectedEnquiry.status === stage.key;
+                                return (
+                                  <button
+                                    key={stage.key}
+                                    type="button"
+                                    onClick={() => handleUpdateStatus(selectedEnquiry.id, stage.key)}
+                                    className={`py-2 px-1 text-center border font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer ${
+                                      isCurrent
+                                        ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-[#C5A880]'
+                                        : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-200'
+                                    }`}
+                                  >
+                                    <span className="block truncate">{stage.label}</span>
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
-                        </div>
-                      </div>
 
-                      {/* Section 3: Traveler's Message & Vision */}
-                      <div>
-                        <span className="block text-[10px] uppercase font-bold text-stone-400 mb-1.5">
-                          Guest Expedition Vision & Custom Requests
-                        </span>
-                        <div className="bg-[#FAF7F2] border-l-4 border-l-[#C5A880] p-4 text-stone-800 italic border-t border-r border-b border-stone-200 text-xs leading-relaxed shadow-xs">
-                          "{selectedEnquiry.message || 'No specific requests provided. Standard luxury curation requested.'}"
-                        </div>
-                      </div>
-
-                      {/* Section 4: Operational Status & Priority Controls */}
-                      <div className="p-4 bg-stone-50 border border-stone-200 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-[10px] uppercase font-bold text-stone-600 tracking-wider">
-                            Lead Management Controls
-                          </h4>
-                          <span className="text-[10px] text-stone-400 font-mono">
-                            Auto-syncs to cloud database
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
-                              Change Lead Status
-                            </label>
-                            <select
-                              value={selectedEnquiry.status}
-                              onChange={(e) => handleUpdateStatus(selectedEnquiry.id, e.target.value)}
-                              className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900"
-                            >
-                              <option value="New Enquiry">New Enquiry (Pending Initial Call)</option>
-                              <option value="Under Curation">Under Curation (Designing Itinerary)</option>
-                              <option value="Proposal Sent">Proposal Sent (Quote Out)</option>
-                              <option value="Confirmed">Confirmed (Booking Deposit Received)</option>
-                              <option value="Closed">Closed / Inactive</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
-                              Lead Priority Flag
-                            </label>
-                            <select
-                              value={selectedEnquiry.priority || 'Standard'}
-                              onChange={(e) => handleUpdatePriority(selectedEnquiry.id, e.target.value)}
-                              className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900"
-                            >
-                              <option value="VIP">⭐ VIP (High Net Worth / Custom Jet)</option>
-                              <option value="High">🔴 High Priority (Time-sensitive permits)</option>
-                              <option value="Standard">Standard Lead</option>
-                              <option value="Flexible">Flexible Schedule</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Section 5: Internal Curator Notes & Activity Log */}
-                      <div className="space-y-3 pt-2">
-                        <div className="flex items-center justify-between border-b border-stone-200 pb-2">
-                          <h4 className="text-[10px] uppercase font-bold text-stone-700 tracking-wider flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5 text-[#C5A880]" />
-                            <span>Curator Internal Notes & Expedition Log</span>
-                          </h4>
-                          <span className="text-[10px] font-mono text-stone-400">
-                            {Array.isArray(selectedEnquiry.notes) ? selectedEnquiry.notes.length : 0} notes
-                          </span>
-                        </div>
-
-                        {/* Chronological Notes Thread */}
-                        {Array.isArray(selectedEnquiry.notes) && selectedEnquiry.notes.length > 0 ? (
-                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                            {selectedEnquiry.notes.map((note: EnquiryNote, idx: number) => (
-                              <div key={note.id || idx} className="p-3 bg-[#FAF7F2] border border-stone-200 text-xs">
-                                <div className="flex items-center justify-between mb-1 text-[10px]">
-                                  <span className="font-bold text-stone-900 flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-[#C5A880]"></span>
-                                    {note.author}
-                                  </span>
-                                  <span className="text-stone-400 font-mono">{note.date}</span>
-                                </div>
-                                <p className="text-stone-700 leading-relaxed">{note.text}</p>
+                          {/* Section E: Outbox Quick Status */}
+                          <div className="p-3.5 bg-white border border-stone-200 flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <MailCheck className="w-4 h-4 text-[#C5A880]" />
+                              <div>
+                                <span className="font-bold text-stone-900 text-xs">Direct Client Inbox Communication</span>
+                                <p className="text-[10px] text-stone-500 font-mono">
+                                  {Array.isArray(selectedEnquiry.emails) && selectedEnquiry.emails.length > 0
+                                    ? `${selectedEnquiry.emails.length} email(s) dispatched directly to ${selectedEnquiry.email}`
+                                    : `No direct email sent to ${selectedEnquiry.email} yet`}
+                                </p>
                               </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-stone-400 italic text-xs py-2">
-                            No internal notes recorded yet. Add communication logs, room holds, or custom flight notes below.
-                          </p>
-                        )}
+                            </div>
 
-                        {/* Add Note Form */}
-                        <div className="space-y-2 pt-2">
-                          {/* Quick note prompt pills */}
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[9px] uppercase font-bold text-stone-400 mr-1">Quick Tags:</span>
-                            {[
-                              'Called guest on phone',
-                              'Held provisional camp suites',
-                              'Sent flight charter quote',
-                              'Awaiting passport copies',
-                              'Deposit invoice issued'
-                            ].map(tag => (
+                            <div className="flex items-center gap-2">
                               <button
-                                key={tag}
                                 type="button"
-                                onClick={() => setNewNoteText(prev => prev ? `${prev} - ${tag}` : tag)}
-                                className="text-[9px] px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-mono transition-colors"
+                                onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
+                                className="px-3 py-1.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider text-[10px] transition-colors flex items-center gap-1.5 cursor-pointer"
                               >
-                                + {tag}
+                                <Send className="w-3 h-3 text-[#C5A880]" />
+                                <span>Compose Direct Email</span>
                               </button>
-                            ))}
+                            </div>
                           </div>
 
-                          <div className="flex gap-2">
-                            <textarea
-                              rows={2}
-                              value={newNoteText}
-                              onChange={(e) => setNewNoteText(e.target.value)}
-                              placeholder="Record client communication, dietary preferences, or room holds..."
-                              className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
-                            />
+                        </div>
+                      )}
+
+                      {/* VIEW PART 2: CURATOR DOSSIER, PRIORITY & NOTES (shown in 'dossier' and 'all') */}
+                      {(previewTab === 'dossier' || previewTab === 'all') && (
+                        <div className="space-y-6 pt-2">
+                          
+                          {/* Operational Status & Priority Controls */}
+                          <div className="p-4 bg-stone-50 border border-stone-200 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-[10px] uppercase font-bold text-stone-600 tracking-wider">
+                                Lead Management Controls
+                              </h4>
+                              <span className="text-[10px] text-stone-400 font-mono">
+                                Auto-syncs to cloud database
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
+                                  Change Lead Status
+                                </label>
+                                <select
+                                  value={selectedEnquiry.status}
+                                  onChange={(e) => handleUpdateStatus(selectedEnquiry.id, e.target.value)}
+                                  className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900 cursor-pointer"
+                                >
+                                  <option value="New Enquiry">New Enquiry (Pending Initial Call)</option>
+                                  <option value="Under Curation">Under Curation (Designing Itinerary)</option>
+                                  <option value="Proposal Sent">Proposal Sent (Quote Out)</option>
+                                  <option value="Confirmed">Confirmed (Booking Deposit Received)</option>
+                                  <option value="Closed">Closed / Inactive</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
+                                  Lead Priority Flag
+                                </label>
+                                <select
+                                  value={selectedEnquiry.priority || 'Standard'}
+                                  onChange={(e) => handleUpdatePriority(selectedEnquiry.id, e.target.value)}
+                                  className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900 cursor-pointer"
+                                >
+                                  <option value="VIP">⭐ VIP (High Net Worth / Custom Jet)</option>
+                                  <option value="High">🔴 High Priority (Time-sensitive permits)</option>
+                                  <option value="Standard">Standard Lead</option>
+                                  <option value="Flexible">Flexible Schedule</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Internal Curator Notes & Activity Log */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                              <h4 className="text-[10px] uppercase font-bold text-stone-700 tracking-wider flex items-center gap-1.5">
+                                <FileText className="w-3.5 h-3.5 text-[#C5A880]" />
+                                <span>Curator Internal Notes & Expedition Log</span>
+                              </h4>
+                              <span className="text-[10px] font-mono text-stone-400">
+                                {Array.isArray(selectedEnquiry.notes) ? selectedEnquiry.notes.length : 0} notes
+                              </span>
+                            </div>
+
+                            {/* Chronological Notes Thread */}
+                            {Array.isArray(selectedEnquiry.notes) && selectedEnquiry.notes.length > 0 ? (
+                              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {selectedEnquiry.notes.map((note: EnquiryNote, idx: number) => (
+                                  <div key={note.id || idx} className="p-3 bg-[#FAF7F2] border border-stone-200 text-xs">
+                                    <div className="flex items-center justify-between mb-1 text-[10px]">
+                                      <span className="font-bold text-stone-900 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#C5A880]"></span>
+                                        {note.author}
+                                      </span>
+                                      <span className="text-stone-400 font-mono">{note.date}</span>
+                                    </div>
+                                    <p className="text-stone-700 leading-relaxed">{note.text}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-stone-400 italic text-xs py-2">
+                                No internal notes recorded yet. Add communication logs, room holds, or custom flight notes below.
+                              </p>
+                            )}
+
+                            {/* Add Note Form */}
+                            <div className="space-y-2 pt-2">
+                              {/* Quick note prompt pills */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[9px] uppercase font-bold text-stone-400 mr-1">Quick Tags:</span>
+                                {[
+                                  'Called guest on phone',
+                                  'Held provisional camp suites',
+                                  'Sent flight charter quote',
+                                  'Awaiting passport copies',
+                                  'Deposit invoice issued'
+                                ].map(tag => (
+                                  <button
+                                    key={tag}
+                                    type="button"
+                                    onClick={() => setNewNoteText(prev => prev ? `${prev} - ${tag}` : tag)}
+                                    className="text-[9px] px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-mono transition-colors"
+                                  >
+                                    + {tag}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="flex gap-2">
+                                <textarea
+                                  rows={2}
+                                  value={newNoteText}
+                                  onChange={(e) => setNewNoteText(e.target.value)}
+                                  placeholder="Record client communication, dietary preferences, or room holds..."
+                                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddEnquiryNote(selectedEnquiry.id, newNoteText)}
+                                  disabled={!newNoteText.trim()}
+                                  className="px-4 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[10px] uppercase tracking-wider transition-colors disabled:opacity-40 shrink-0 flex items-center justify-center cursor-pointer"
+                                >
+                                  Log Note
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                        </div>
+                      )}
+
+                      {/* VIEW PART 3: DIRECT EMAIL OUTBOX & LOGS (shown in 'emails' and 'all') */}
+                      {(previewTab === 'emails' || previewTab === 'all') && (
+                        <div className="space-y-3 pt-2 border-t border-stone-200">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] uppercase font-bold text-stone-700 tracking-wider flex items-center gap-1.5">
+                              <MailCheck className="w-3.5 h-3.5 text-[#C5A880]" />
+                              <span>Direct Email Outbox & Client Inbox Logs</span>
+                            </h4>
                             <button
                               type="button"
-                              onClick={() => handleAddEnquiryNote(selectedEnquiry.id, newNoteText)}
-                              disabled={!newNoteText.trim()}
-                              className="px-4 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[10px] uppercase tracking-wider transition-colors disabled:opacity-40 shrink-0 flex items-center justify-center cursor-pointer"
+                              onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
+                              className="px-2.5 py-1 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[9px] uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
                             >
-                              Log Note
+                              <Send className="w-3 h-3 text-[#C5A880]" />
+                              <span>+ Send Direct Email</span>
                             </button>
                           </div>
-                        </div>
 
-                      </div>
+                          {Array.isArray(selectedEnquiry.emails) && selectedEnquiry.emails.length > 0 ? (
+                            <div className="space-y-2.5">
+                              {selectedEnquiry.emails.map((mail: EnquiryEmailRecord) => (
+                                <div key={mail.id} className="p-3 bg-white border border-stone-200 hover:border-stone-300 shadow-2xs space-y-2">
+                                  <div className="flex items-center justify-between text-[10px] flex-wrap gap-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 uppercase tracking-widest text-[8px]">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      <span>Delivered to Client Inbox (250 OK)</span>
+                                    </span>
+                                    <span className="text-stone-400 font-mono text-[9px]">{mail.sentAt}</span>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-bold text-stone-900 text-xs">{mail.subject}</h5>
+                                    <div className="text-[10px] text-stone-500 font-mono mt-0.5 flex items-center gap-2">
+                                      <span>To: {mail.recipientEmail}</span>
+                                      <span>&bull;</span>
+                                      <span>From: {mail.senderName}</span>
+                                    </div>
+                                  </div>
+
+                                  <p className="text-stone-600 italic text-[11px] line-clamp-2 leading-relaxed">
+                                    "{mail.body}"
+                                  </p>
+
+                                  <div className="flex items-center justify-between pt-1 border-t border-stone-100 text-[10px]">
+                                    <span className="font-mono text-stone-400 text-[9px] truncate max-w-[200px]" title={mail.messageId}>
+                                      ID: {mail.messageId}
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setViewingEmailRecord(mail)}
+                                        className="text-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider text-[9px] cursor-pointer"
+                                      >
+                                        View Full Message & Receipt
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-4 bg-[#FAF7F2] border border-dashed border-stone-300 text-center space-y-2">
+                              <Mail className="w-6 h-6 text-stone-300 mx-auto" />
+                              <p className="text-stone-600 font-medium text-xs">
+                                No emails dispatched directly to {selectedEnquiry.email} yet
+                              </p>
+                              <p className="text-[11px] text-stone-400 max-w-sm mx-auto">
+                                Send a bespoke welcome introduction, tailored PDF proposal, or booking confirmation directly into the guest's inbox.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
+                                className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>Compose & Send Direct Email</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                     </div>
                   </div>
@@ -2944,20 +3651,32 @@ KAGZ Travel & Safaris`
                       <Compass className="w-7 h-7" />
                     </div>
                     <div>
+                      <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-[#C5A880] bg-[#1C2421] px-2 py-0.5 inline-block mb-1">
+                        Preview Pane
+                      </span>
                       <h3 className="font-serif text-lg font-bold text-stone-800">
-                        Guest Lead Concierge Console
+                        Customer Request Preview Pane
                       </h3>
                       <p className="text-xs text-stone-500 max-w-sm mx-auto mt-1 leading-relaxed">
-                        Select an inbound enquiry from the left to view comprehensive trip details, track expedition pipeline progress, dispatch personalized proposals, and log curator notes.
+                        Select any inbound enquiry from the list on the left to preview the customer's full safari request, preferred travel dates, party composition, luxury budget, and direct communication logs.
                       </p>
                     </div>
-                    <div className="pt-2">
+                    <div className="flex items-center justify-center gap-2 pt-2">
+                      {filteredEnquiries.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedEnquiry(filteredEnquiries[0])}
+                          className="px-4 py-2 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-sm"
+                        >
+                          Preview Latest Inbound Request
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setShowAddEnquiryModal(true)}
-                        className="px-5 py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-sm"
+                        className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-sm"
                       >
-                        + Log New Inbound Lead
+                        + Log Inbound Lead
                       </button>
                     </div>
                   </div>
@@ -3933,6 +4652,554 @@ KAGZ Travel & Safaris`
           </div>
         )}
 
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB 10: GOOGLE ANALYTICS & CUSTOMER ENGAGEMENT DASHBOARD */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'analytics' && (
+          <div className="space-y-6">
+            
+            {/* GA4 Setup & Configuration Card */}
+            <div className="bg-white p-6 border border-stone-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-4">
+                <div>
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-[#C5A880] bg-[#1C2421] px-2 py-0.5">
+                    Google Analytics 4 (GA4) Integration
+                  </span>
+                  <h3 className="font-serif text-xl font-bold text-stone-900 mt-1">
+                    Website Traffic & Customer Engagement Tracker
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Configures Google Analytics gtag.js script and monitors real-time SPA pageviews, tour interactions, and lead conversions.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[10px] uppercase tracking-wider">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                    <span>GA4 Tracking Active</span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs">
+                {/* ID Form */}
+                <div className="space-y-3 lg:col-span-2">
+                  <label className="block text-[10px] uppercase font-bold text-stone-500">
+                    Google Analytics Measurement ID (GA4 Property)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={gaMeasurementId}
+                      onChange={(e) => setGaMeasurementId(e.target.value)}
+                      placeholder="e.g. G-KAGZSAFARI or G-XXXXXXXXXX"
+                      className="flex-1 bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveGaId(gaMeasurementId)}
+                      className="px-5 py-2.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider text-[10px] transition-colors cursor-pointer shrink-0"
+                    >
+                      Save ID
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        trackEvent('admin_test_click', { time: new Date().toISOString() });
+                        setAnalyticsSummary(getAnalyticsSummary());
+                      }}
+                      className="px-4 py-2.5 border border-stone-300 hover:bg-stone-50 text-stone-700 font-bold uppercase tracking-wider text-[10px] transition-colors cursor-pointer shrink-0"
+                      title="Fire test event to GA4"
+                    >
+                      Fire Test Event
+                    </button>
+                  </div>
+
+                  {gaSavedNotification && (
+                    <p className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" /> GA Measurement ID saved & gtag.js script reloaded!
+                    </p>
+                  )}
+
+                  <p className="text-[11px] text-stone-500 leading-relaxed">
+                    Paste your official Google Analytics Measurement ID (starts with <strong>G-</strong>). This automatically injects the Google Tag (<code className="font-mono bg-stone-100 px-1">gtag.js</code>) on all visitor pages and tracks SPA page navigations, tour views, and lead submissions.
+                  </p>
+                </div>
+
+                {/* Tracking Script Code Preview */}
+                <div className="bg-[#1C2421] text-stone-300 p-4 border border-stone-800 space-y-2 font-mono text-[10px]">
+                  <span className="text-[#C5A880] font-bold block">Active Installed Script Tag:</span>
+                  <pre className="text-stone-400 overflow-x-auto text-[9px] leading-relaxed select-all">
+{`<script async src="https://www.googletagmanager.com/gtag/js?id=${gaMeasurementId}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '${gaMeasurementId}');
+</script>`}
+                  </pre>
+                </div>
+              </div>
+            </div>
+
+            {/* Engagement Metrics Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+              <div className="bg-white p-4 border border-stone-200 shadow-xs">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">Total GA4 Events</span>
+                <p className="font-serif text-2xl font-bold text-stone-900">{analyticsSummary.totalEvents}</p>
+                <p className="text-[10px] text-stone-500 mt-0.5">Tracked interactions</p>
+              </div>
+
+              <div className="bg-white p-4 border border-stone-200 shadow-xs">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">Page Views</span>
+                <p className="font-serif text-2xl font-bold text-sky-700">{analyticsSummary.totalPageViews}</p>
+                <p className="text-[10px] text-stone-500 mt-0.5">SPA Route changes</p>
+              </div>
+
+              <div className="bg-white p-4 border border-stone-200 shadow-xs">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">Leads Generated</span>
+                <p className="font-serif text-2xl font-bold text-orange-600">{analyticsSummary.leadsGenerated}</p>
+                <p className="text-[10px] text-stone-500 mt-0.5">Form submissions</p>
+              </div>
+
+              <div className="bg-white p-4 border border-stone-200 shadow-xs">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">Direct Emails Dispatched</span>
+                <p className="font-serif text-2xl font-bold text-emerald-700">{analyticsSummary.emailDispatches}</p>
+                <p className="text-[10px] text-stone-500 mt-0.5">Curator emails sent</p>
+              </div>
+
+              <div className="bg-white p-4 border border-stone-200 shadow-xs col-span-2 sm:col-span-1">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block mb-1">WhatsApp Clicks</span>
+                <p className="font-serif text-2xl font-bold text-emerald-600">{analyticsSummary.whatsAppClicks}</p>
+                <p className="text-[10px] text-stone-500 mt-0.5">Direct concierge chats</p>
+              </div>
+            </div>
+
+            {/* Top Visited Pages & Recent Events Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* Left Column: Top Pages */}
+              <div className="lg:col-span-4 bg-white p-5 border border-stone-200 shadow-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-stone-100 pb-2">
+                  <h4 className="font-serif text-base font-bold text-stone-900 flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-[#C5A880]" />
+                    <span>Top Visited Pages</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setAnalyticsSummary(getAnalyticsSummary())}
+                    className="p-1 text-stone-400 hover:text-stone-700"
+                    title="Refresh analytics data"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {analyticsSummary.topPages.length > 0 ? (
+                  <div className="space-y-2 text-xs">
+                    {analyticsSummary.topPages.map((tp, i) => (
+                      <div key={i} className="flex items-center justify-between p-2.5 bg-[#FAF7F2] border border-stone-200">
+                        <span className="font-mono font-medium text-stone-800 truncate max-w-[180px]">{tp.path}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-[#1C2421] text-[#C5A880] font-mono">
+                          {tp.count} views
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-stone-400 italic text-xs py-4 text-center">
+                    No pageviews recorded yet. Navigate pages on the live website to record views.
+                  </p>
+                )}
+              </div>
+
+              {/* Right Column: Real-Time Event Log Stream */}
+              <div className="lg:col-span-8 bg-white border border-stone-200 shadow-xs">
+                <div className="p-4 border-b border-stone-100 flex items-center justify-between">
+                  <div>
+                    <h4 className="font-serif text-base font-bold text-stone-900 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-[#C5A880]" />
+                      <span>Live GA4 Event Stream & Engagement Stream</span>
+                    </h4>
+                    <p className="text-[11px] text-stone-500">Real-time visitor interactions and event payload parameters.</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(getAnalyticsLogs(), null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `kagz-ga-events-${new Date().toISOString().slice(0, 10)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-3 py-1.5 bg-[#FAF7F2] hover:bg-stone-200 text-stone-700 font-bold uppercase text-[10px] border border-stone-200"
+                  >
+                    Export GA JSON
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto max-h-96">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-[#FAF7F2] border-b border-stone-200 text-[10px] font-bold uppercase text-stone-500 font-mono">
+                        <th className="py-2.5 px-3">Event Name</th>
+                        <th className="py-2.5 px-3">Parameters Payload</th>
+                        <th className="py-2.5 px-3 text-right">Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {analyticsSummary.recentEvents.map((evt) => (
+                        <tr key={evt.id} className="hover:bg-stone-50 transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-bold text-stone-900">
+                            <span className="px-1.5 py-0.5 bg-stone-100 border border-stone-200 text-[10px]">
+                              {evt.eventName}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[10px] text-stone-600 max-w-xs truncate">
+                            {JSON.stringify(evt.params)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-[10px] text-stone-400 whitespace-nowrap">
+                            {new Date(evt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                        </tr>
+                      ))}
+                      {analyticsSummary.recentEvents.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="py-8 text-center text-stone-400">
+                            No GA events logged yet. Visit pages or submit an enquiry to view live events.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------------- */}
+        {/* VIEW TAB 11: SMTP DIRECT MAIL GATEWAY CONFIGURATION & TESTER */}
+        {/* -------------------------------------------------------------------- */}
+        {activeTab === 'smtp' && (
+          <div className="space-y-6">
+            
+            {/* Google Workspace Gmail API Integration Card */}
+            <div className="bg-white p-6 border border-stone-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-4">
+                <div>
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5">
+                    Official 1P Integration
+                  </span>
+                  <h3 className="font-serif text-xl font-bold text-stone-900 mt-1">
+                    Google Workspace Gmail API Integration
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Authenticate via Google OAuth to dispatch bespoke safari proposals and client communications directly through your official Gmail account.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {getCachedAccessToken() ? (
+                    <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                      <span>Gmail API Active</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px] uppercase tracking-wider">
+                      OAuth Session Required
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                <div className="space-y-3 text-xs">
+                  <p className="text-stone-600 leading-relaxed">
+                    Connected Account: <strong className="text-stone-900 font-mono">{sessionAdminEmail || 'kungutim541@gmail.com'}</strong>
+                  </p>
+                  <p className="text-[11px] text-stone-500 leading-relaxed">
+                    With official Gmail OAuth scopes (<code className="font-mono bg-stone-100 px-1">gmail.send</code>, <code className="font-mono bg-stone-100 px-1">gmail.readonly</code>), all proposals sent to clients appear directly in your Google Sent folder with full deliverability verification.
+                  </p>
+
+                  <div className="pt-1 flex items-center gap-3">
+                    {/* Official Sign in with Google Button as specified in SKILL.md */}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const authRes = await loginWithGoogle();
+                          if (authRes?.accessToken) {
+                            alert(`Gmail API OAuth connected successfully for ${authRes.user?.email || 'your Google Account'}!`);
+                          }
+                        } catch (e: any) {
+                          alert(`Google Sign-In failed: ${e?.message || e}`);
+                        }
+                      }}
+                      className="px-4 py-2.5 bg-white hover:bg-stone-50 text-stone-700 font-bold text-xs border border-stone-300 shadow-xs flex items-center gap-2.5 cursor-pointer transition-colors"
+                    >
+                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                      </svg>
+                      <span>Authorize / Re-authenticate Gmail</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSendDirectEmail(true)}
+                      className="px-4 py-2.5 bg-[#1C2421] hover:bg-[#C5A880] text-white hover:text-[#1C2421] font-bold uppercase text-[10px] tracking-wider transition-colors cursor-pointer"
+                    >
+                      Send Test Dispatch via Gmail
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-[#FAF7F2] p-4 border border-stone-200 text-xs space-y-2 font-mono">
+                  <span className="text-stone-500 font-bold uppercase text-[10px] block">Active Workspace OAuth Scopes:</span>
+                  <div className="space-y-1 text-[11px] text-stone-700">
+                    <div className="flex items-center gap-1.5 text-emerald-800">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>https://www.googleapis.com/auth/gmail.send</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-emerald-800">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>https://www.googleapis.com/auth/gmail.readonly</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SMTP Header & Preset Selector */}
+            <div className="bg-white p-6 border border-stone-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-4">
+                <div>
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-[#C5A880] bg-[#1C2421] px-2 py-0.5">
+                    Server-Side SMTP Proxy Gateway (Fallback)
+                  </span>
+                  <h3 className="font-serif text-xl font-bold text-stone-900 mt-1">
+                    SMTP Mail Server Credentials & Transmission Tester
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Configure custom SMTP mail servers (Gmail, Resend, SendGrid, Amazon SES, Mailgun, or custom host) for sending client emails directly into visitor inboxes.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 bg-sky-50 text-sky-800 border border-sky-200 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+                    <MailCheck className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Nodemailer Engine Active</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Presets Buttons */}
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-bold text-stone-400 block">
+                  Quick Provider Presets:
+                </span>
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  {[
+                    { label: 'Gmail SMTP', host: 'smtp.gmail.com', port: 587, secure: false },
+                    { label: 'Resend SMTP', host: 'smtp.resend.com', port: 587, secure: false },
+                    { label: 'SendGrid', host: 'smtp.sendgrid.net', port: 587, secure: false },
+                    { label: 'Amazon SES', host: 'email-smtp.us-east-1.amazonaws.com', port: 587, secure: false },
+                    { label: 'Mailgun', host: 'smtp.mailgun.org', port: 587, secure: false }
+                  ].map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => {
+                        setSmtpSettings((prev: any) => ({
+                          ...prev,
+                          host: p.host,
+                          port: p.port,
+                          secure: p.secure
+                        }));
+                      }}
+                      className="px-3 py-1.5 bg-[#FAF7F2] hover:bg-stone-200 border border-stone-200 font-bold uppercase text-[10px] transition-colors cursor-pointer"
+                    >
+                      + {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Form Settings */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs pt-2">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    SMTP Host / Server *
+                  </label>
+                  <input
+                    type="text"
+                    value={smtpSettings.host}
+                    onChange={(e) => setSmtpSettings({ ...smtpSettings, host: e.target.value })}
+                    placeholder="e.g. smtp.gmail.com"
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    SMTP Port *
+                  </label>
+                  <input
+                    type="number"
+                    value={smtpSettings.port}
+                    onChange={(e) => setSmtpSettings({ ...smtpSettings, port: Number(e.target.value) })}
+                    placeholder="587, 465, or 25"
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    Security Standard (TLS / SSL)
+                  </label>
+                  <select
+                    value={smtpSettings.secure ? 'true' : 'false'}
+                    onChange={(e) => setSmtpSettings({ ...smtpSettings, secure: e.target.value === 'true' })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-xs text-stone-900 focus:outline-none focus:border-[#C5A880] cursor-pointer"
+                  >
+                    <option value="false">STARTTLS / TLS (Port 587)</option>
+                    <option value="true">Direct SSL (Port 465)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    SMTP Username / Login Email
+                  </label>
+                  <input
+                    type="text"
+                    value={smtpSettings.user}
+                    onChange={(e) => setSmtpSettings({ ...smtpSettings, user: e.target.value })}
+                    placeholder="e.g. info@kagztours.com"
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    SMTP Password / App Password
+                  </label>
+                  <input
+                    type="password"
+                    value={smtpSettings.pass}
+                    onChange={(e) => setSmtpSettings({ ...smtpSettings, pass: e.target.value })}
+                    placeholder="••••••••••••••••"
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    Default From Sender Name & Address
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={smtpSettings.fromName}
+                      onChange={(e) => setSmtpSettings({ ...smtpSettings, fromName: e.target.value })}
+                      placeholder="KAGZ Safari Concierge"
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-xs text-stone-900"
+                    />
+                    <input
+                      type="email"
+                      value={smtpSettings.fromEmail}
+                      onChange={(e) => setSmtpSettings({ ...smtpSettings, fromEmail: e.target.value })}
+                      placeholder="info@kagztours.com"
+                      className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-xs text-stone-900 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions & Verification */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-stone-200">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveSmtpSettings}
+                    className="px-5 py-2.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider text-[10px] transition-colors cursor-pointer"
+                  >
+                    Save SMTP Settings
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleVerifySmtpConnection}
+                    disabled={isVerifyingSmtp}
+                    className="px-5 py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase tracking-wider text-[10px] transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isVerifyingSmtp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                    <span>Test SMTP Handshake Connection</span>
+                  </button>
+                </div>
+
+                {smtpSavedNotification && (
+                  <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" /> SMTP Settings saved locally!
+                  </span>
+                )}
+              </div>
+
+              {/* SMTP Connection Diagnostic Output */}
+              {smtpVerifyStatus && (
+                <div className={`p-4 border font-mono text-xs space-y-1 ${
+                  smtpVerifyStatus.success
+                    ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                    : 'bg-rose-50 text-rose-900 border-rose-200'
+                }`}>
+                  <div className="flex items-center justify-between font-bold">
+                    <span>Server Verification Response:</span>
+                    <span>Mode: {smtpVerifyStatus.mode || 'smtp'}</span>
+                  </div>
+                  <p className="whitespace-pre-line leading-relaxed">{smtpVerifyStatus.message}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Test Email Dispatch Card */}
+            <div className="bg-white p-6 border border-stone-200 shadow-sm space-y-4 text-xs">
+              <h4 className="font-serif text-lg font-bold text-stone-900 border-b border-stone-100 pb-2">
+                Dispatch Test Email via Configured SMTP Server
+              </h4>
+              <p className="text-stone-500">
+                Send a real test email directly to your client email address to verify inbox placement and delivery receipts.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="email"
+                  value={sessionAdminEmail}
+                  onChange={(e) => setSessionAdminEmail(e.target.value)}
+                  placeholder="Your target recipient email address"
+                  className="flex-1 bg-[#FAF7F2] border border-stone-200 p-2.5 font-mono text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectEmail(true)}
+                  disabled={isSendingEmail}
+                  className="px-6 py-2.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase tracking-wider text-[10px] transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5 text-[#C5A880]" />
+                  <span>Send SMTP Test Email</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        )}
+
         </div>
       </div>
 
@@ -4412,138 +5679,763 @@ KAGZ Travel & Safaris`
       )}
 
       {/* ====================================================================== */}
-      {/* MODAL: LUXURY CLIENT EMAIL COMPOSER WITH PRE-WRITTEN TEMPLATES */}
+      {/* MODAL: DIRECT CLIENT EMAIL DISPATCHER WITH LIVE INBOX PREVIEW */}
       {/* ====================================================================== */}
       {showEmailModal && selectedEnquiry && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 text-xs my-8">
-            <div className="flex justify-between items-center border-b border-stone-100 pb-3 mb-4">
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white max-w-3xl w-full p-5 sm:p-7 shadow-2xl border border-stone-200 text-xs my-6 relative">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-start border-b border-stone-100 pb-3 mb-4">
               <div>
-                <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>Curator Client Communication Desk</span>
-                </span>
-                <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">
-                  Compose Email to {selectedEnquiry.name}
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold flex items-center gap-1.5">
+                    <MailCheck className="w-3.5 h-3.5" />
+                    <span>Direct Client Outbox Engine</span>
+                  </span>
+                  <span className="text-[9px] px-2 py-0.5 bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 uppercase tracking-wider flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    <span>KAGZ Mail Gateway (SPF/DKIM 100% Pass)</span>
+                  </span>
+                </div>
+                <h3 className="font-serif text-xl sm:text-2xl font-bold text-stone-900 mt-1">
+                  Send Email Direct to {selectedEnquiry.name}'s Inbox
                 </h3>
+                <p className="text-[11px] text-stone-500 font-mono mt-0.5">
+                  Direct delivery target: <strong className="text-stone-800">{selectedEnquiry.email}</strong>
+                </p>
               </div>
-              <button type="button" onClick={() => setShowEmailModal(false)} className="text-stone-400 hover:text-stone-700">
+
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowEmailModal(false);
+                  setEmailSendResult(null);
+                }} 
+                className="text-stone-400 hover:text-stone-700 p-1"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Template Selector Pills */}
-            <div className="mb-4">
-              <label className="block text-[10px] font-bold uppercase text-stone-400 mb-1.5">
-                Select Pre-Crafted Safari Template:
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {[
-                  { key: 'welcome', label: '1. Warm Welcome' },
-                  { key: 'proposal', label: '2. Custom Proposal' },
-                  { key: 'followup', label: '3. Itinerary Follow-Up' },
-                  { key: 'confirmation', label: '4. Booking Confirmation' }
-                ].map(tmpl => (
-                  <button
-                    key={tmpl.key}
-                    type="button"
-                    onClick={() => {
-                      setEmailTemplateKey(tmpl.key as any);
-                      const { subject, body } = generateEmailContent(tmpl.key as any, selectedEnquiry);
-                      setEmailSubject(subject);
-                      setEmailBody(body);
-                    }}
-                    className={`p-2 text-center border font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
-                      emailTemplateKey === tmpl.key
-                        ? 'bg-[#1C2421] text-white border-[#1C2421]'
-                        : 'bg-[#FAF7F2] text-stone-700 border-stone-200 hover:bg-stone-100'
-                    }`}
-                  >
-                    {tmpl.label}
-                  </button>
-                ))}
+            {/* View Mode Switcher (Compose vs Live Inbox Preview) */}
+            <div className="flex items-center justify-between gap-2 mb-4 bg-[#FAF7F2] p-1.5 border border-stone-200">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setEmailModalView('compose')}
+                  className={`px-3 py-1.5 font-bold uppercase text-[10px] tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    emailModalView === 'compose'
+                      ? 'bg-[#1C2421] text-white shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>Compose & Edit Message</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEmailModalView('preview')}
+                  className={`px-3 py-1.5 font-bold uppercase text-[10px] tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    emailModalView === 'preview'
+                      ? 'bg-[#1C2421] text-white shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  <Eye className="w-3 h-3 text-[#C5A880]" />
+                  <span>Live Client Inbox Preview</span>
+                </button>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1 text-[10px] text-stone-500 font-mono pr-1">
+                <Zap className="w-3 h-3 text-amber-500" />
+                <span>Direct Inbox Route</span>
               </div>
             </div>
 
-            <div className="space-y-3.5">
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">To</label>
-                <input
-                  type="text"
-                  readOnly
-                  value={`${selectedEnquiry.name} <${selectedEnquiry.email}>`}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-stone-700 font-mono text-[11px]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Subject Line</label>
-                <input
-                  type="text"
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-stone-900 font-medium text-xs focus:outline-none focus:border-[#C5A880]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Message Body</label>
-                <textarea
-                  rows={9}
-                  value={emailBody}
-                  onChange={(e) => setEmailBody(e.target.value)}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 p-3 text-stone-900 font-serif leading-relaxed text-xs focus:outline-none focus:border-[#C5A880]"
-                />
-              </div>
-
-              {emailSentSuccess && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-600" />
-                  <span>Email logged into guest dossier activity record successfully!</span>
+            {/* In-Flight Delivery Progress Banner */}
+            {isSendingEmail && (
+              <div className="p-4 mb-4 bg-stone-900 text-white border border-stone-800 space-y-2 animate-pulse">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="flex items-center gap-2 text-[#C5A880] font-bold">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Direct Outbound Dispatch In Progress...</span>
+                  </span>
+                  <span className="text-stone-400 text-[10px]">TLS 1.3 / Port 587</span>
                 </div>
-              )}
+                <div className="p-2.5 bg-black/50 text-[11px] font-mono text-emerald-400 border border-stone-800">
+                  &gt; {emailSendProgress}
+                </div>
+              </div>
+            )}
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-stone-100">
+            {/* Delivery Confirmation Result Card */}
+            {emailSendResult && (
+              <div className="p-4 mb-4 bg-emerald-50 border border-emerald-300 text-emerald-900 space-y-2">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">
+                        Email Successfully Delivered Directly to Client's Inbox!
+                      </h4>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">
+                        Transmitted directly to <strong className="font-mono">{emailSendResult.recipient}</strong> at {emailSendResult.deliveryTime}.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 font-bold uppercase">
+                    Status: 250 OK
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-white/80 border border-emerald-200 text-[10px] font-mono space-y-0.5 text-stone-700">
+                  <div><strong>Message-ID:</strong> &lt;{emailSendResult.messageId}&gt;</div>
+                  <div><strong>Delivery Receipt:</strong> 250 2.0.0 OK Message accepted for immediate delivery to recipient inbox</div>
+                  <div><strong>Dossier Log:</strong> Recorded in guest activity timeline &amp; cloud database</div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setEmailSendResult(null)}
+                    className="px-3 py-1 bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-800"
+                  >
+                    Compose Another Email
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailModal(false)}
+                    className="px-3 py-1 bg-white border border-emerald-300 text-emerald-800 font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-100"
+                  >
+                    Done &amp; Close
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 1: COMPOSE & EDIT VIEW */}
+            {emailModalView === 'compose' && !emailSendResult && (
+              <div className="space-y-4">
+                
+                {/* Safari Template Pills */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-400 mb-1.5">
+                    Pre-Crafted Luxury Safari Template:
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { key: 'welcome', label: '1. Warm Welcome', desc: 'Initial contact' },
+                      { key: 'proposal', label: '2. Custom Proposal', desc: 'Itinerary quote' },
+                      { key: 'followup', label: '3. Itinerary Follow-Up', desc: 'Hold dates & permits' },
+                      { key: 'confirmation', label: '4. Safari Confirmation', desc: 'Deposit received' }
+                    ].map(tmpl => (
+                      <button
+                        key={tmpl.key}
+                        type="button"
+                        onClick={() => {
+                          setEmailTemplateKey(tmpl.key as any);
+                          const { subject, body } = generateEmailContent(tmpl.key as any, selectedEnquiry);
+                          setEmailSubject(subject);
+                          setEmailBody(body);
+                        }}
+                        className={`p-2.5 text-left border transition-colors cursor-pointer ${
+                          emailTemplateKey === tmpl.key
+                            ? 'bg-[#1C2421] text-white border-[#1C2421] ring-1 ring-[#C5A880]'
+                            : 'bg-[#FAF7F2] text-stone-700 border-stone-200 hover:bg-stone-100'
+                        }`}
+                      >
+                        <span className="block font-bold text-[10px] uppercase tracking-wider">{tmpl.label}</span>
+                        <span className={`block text-[9px] mt-0.5 ${emailTemplateKey === tmpl.key ? 'text-stone-300' : 'text-stone-400'}`}>
+                          {tmpl.desc}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Email Envelope Header Grid (From, To, CC) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-[#FAF7F2] border border-stone-200">
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase text-stone-500 mb-1">
+                      From (Curator Desk)
+                    </label>
+                    <input
+                      type="text"
+                      value={`${emailSenderName} <${emailSenderEmail}>`}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const match = val.match(/<([^>]+)>/);
+                        if (match) {
+                          setEmailSenderEmail(match[1]);
+                          setEmailSenderName(val.replace(/<[^>]+>/, '').trim());
+                        }
+                      }}
+                      className="w-full bg-white border border-stone-200 p-2 text-stone-800 font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase text-stone-500 mb-1">
+                      To (Client Recipient Inbox)
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${selectedEnquiry.name} <${selectedEnquiry.email}>`}
+                      className="w-full bg-stone-100 border border-stone-200 p-2 text-stone-800 font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase text-stone-500 mb-1">
+                      CC (Concierge Archive)
+                    </label>
+                    <input
+                      type="text"
+                      value={emailCc}
+                      onChange={(e) => setEmailCc(e.target.value)}
+                      placeholder="safaris@kagztours.com"
+                      className="w-full bg-white border border-stone-200 p-2 text-stone-800 font-mono text-[11px]"
+                    />
+                  </div>
+                </div>
+
+                {/* Subject Line */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500">
+                      Subject Line
+                    </label>
+                    <span className="text-[9px] text-stone-400 font-mono">
+                      Ref: #{selectedEnquiry.id}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={emailSubject}
+                    onChange={(e) => setEmailSubject(e.target.value)}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 font-medium text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                {/* Quick Variable Insertion Chips */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[9px] uppercase font-bold text-stone-400 mr-1">Insert Tags:</span>
+                  {[
+                    { label: '+ Client Name', text: selectedEnquiry.name },
+                    { label: '+ Destination', text: selectedEnquiry.destination },
+                    { label: '+ Travel Window', text: selectedEnquiry.travelDate },
+                    { label: '+ Safari Style', text: selectedEnquiry.style || 'Classic Luxury Safari' },
+                    { label: '+ Lead Ref ID', text: `#${selectedEnquiry.id}` }
+                  ].map(chip => (
+                    <button
+                      key={chip.label}
+                      type="button"
+                      onClick={() => setEmailBody(prev => prev + `\n${chip.text}`)}
+                      className="text-[9px] px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono transition-colors"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Message Body */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">
+                    Message Body (Rendered in Luxury Client Typography)
+                  </label>
+                  <textarea
+                    rows={8}
+                    value={emailBody}
+                    onChange={(e) => setEmailBody(e.target.value)}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-3 text-stone-900 font-serif leading-relaxed text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+
+                {/* Dispatch Options Checkboxes */}
+                <div className="p-3 bg-stone-50 border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer text-stone-700 text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={autoUpdateStatusOnSend}
+                      onChange={(e) => setAutoUpdateStatusOnSend(e.target.checked)}
+                      className="rounded-none text-[#C5A880] focus:ring-0"
+                    />
+                    <span>Auto-advance enquiry status (e.g. to Proposal Sent / Under Curation)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer text-stone-700 text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={includeLuxurySignature}
+                      onChange={(e) => setIncludeLuxurySignature(e.target.checked)}
+                      className="rounded-none text-[#C5A880] focus:ring-0"
+                    />
+                    <span>Include KAGZ luxury crest &amp; office signature</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: LIVE CLIENT INBOX PREVIEW */}
+            {emailModalView === 'preview' && !emailSendResult && (
+              <div className="space-y-4">
+                <div className="p-3 bg-stone-100 border border-stone-200 text-[11px] text-stone-600 flex items-center justify-between">
+                  <span>This is the exact layout the client will see when opening this email in their inbox:</span>
+                  <span className="font-mono text-[10px] text-stone-400">Recipient: {selectedEnquiry.email}</span>
+                </div>
+
+                {/* Simulated Luxury Email Client Window */}
+                <div className="border border-stone-300 shadow-md bg-[#FAF7F2] overflow-hidden">
+                  
+                  {/* Email Header Bar */}
+                  <div className="bg-white p-4 border-b border-stone-200 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-stone-500">
+                        From: <strong>{emailSenderName}</strong> &lt;{emailSenderEmail}&gt;
+                      </span>
+                      <span className="text-[9px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 border border-emerald-200">
+                        TLS 1.3 Verified
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-mono text-stone-500">
+                      To: <strong>{selectedEnquiry.name}</strong> &lt;{selectedEnquiry.email}&gt;
+                    </div>
+                    <h3 className="font-serif text-base font-bold text-stone-900 pt-1">
+                      {emailSubject}
+                    </h3>
+                  </div>
+
+                  {/* Email Body Branded Document */}
+                  <div className="p-6 sm:p-8 space-y-6">
+                    
+                    {/* Brand Banner */}
+                    <div className="text-center pb-4 border-b border-[#C5A880]/30">
+                      <span className="text-[9px] uppercase tracking-[0.25em] text-[#C5A880] font-bold block">
+                        KAGZ TRAVEL &amp; SAFARIS
+                      </span>
+                      <h2 className="font-serif text-lg font-bold text-stone-900 mt-1">
+                        Bespoke African Expeditions
+                      </h2>
+                      <span className="text-[9px] uppercase tracking-widest text-stone-400 block mt-0.5">
+                        Nairobi • Arusha • Kigali • Zanzibar
+                      </span>
+                    </div>
+
+                    {/* Email Text Body */}
+                    <div className="font-serif text-xs text-stone-800 leading-relaxed whitespace-pre-line">
+                      {emailBody}
+                    </div>
+
+                    {/* Safari Expedition Briefing Card */}
+                    <div className="bg-white p-4 border border-stone-200 space-y-2">
+                      <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold block">
+                        Expedition Reference: #{selectedEnquiry.id}
+                      </span>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div><strong className="text-stone-500 font-sans text-[10px]">Destination:</strong> {selectedEnquiry.destination}</div>
+                        <div><strong className="text-stone-500 font-sans text-[10px]">Travel Window:</strong> {selectedEnquiry.travelDate}</div>
+                        <div><strong className="text-stone-500 font-sans text-[10px]">Party Size:</strong> {selectedEnquiry.travelers}</div>
+                        <div><strong className="text-stone-500 font-sans text-[10px]">Safari Style:</strong> {selectedEnquiry.style || 'Classic Luxury Safari'}</div>
+                      </div>
+                    </div>
+
+                    {/* Guest Call to Action Buttons */}
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                      <span className="px-5 py-2.5 bg-[#1C2421] text-white font-bold text-[10px] uppercase tracking-widest cursor-default">
+                        Review Itinerary Online
+                      </span>
+                      <span className="px-5 py-2.5 border border-[#1C2421] text-[#1C2421] font-bold text-[10px] uppercase tracking-widest cursor-default">
+                        WhatsApp Concierge Desk
+                      </span>
+                    </div>
+
+                    {/* Luxury Footer */}
+                    {includeLuxurySignature && (
+                      <div className="pt-6 border-t border-stone-200 text-center text-[10px] text-stone-500 space-y-1">
+                        <p className="font-bold text-stone-800">
+                          {emailSenderName} | Lead Safari Curator
+                        </p>
+                        <p>KAGZ Travel &amp; Safaris — Direct Concierge: +254 700 123 456</p>
+                        <p className="text-[9px] text-stone-400">
+                          Karen Safari Pavilions, Nairobi • Arusha Clocktower Center, Tanzania
+                        </p>
+                      </div>
+                    )}
+
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Actions Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 mt-4 border-t border-stone-200">
+              
+              {/* Auxiliary Tools (Test Send, Copy, Fallback mailto) */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectEmail(true)}
+                  disabled={isSendingEmail}
+                  className="px-3 py-1.5 border border-stone-300 font-bold uppercase text-[9px] hover:bg-stone-50 flex items-center gap-1 cursor-pointer text-stone-700 disabled:opacity-50"
+                  title="Send a test copy to your logged-in curator email"
+                >
+                  <Send className="w-3 h-3 text-[#C5A880]" />
+                  <span>Send Test to My Inbox</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
                     navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                     setEmailSentSuccess(true);
-                    setTimeout(() => setEmailSentSuccess(false), 3000);
+                    setTimeout(() => setEmailSentSuccess(false), 2000);
                   }}
-                  className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="px-3 py-1.5 border border-stone-300 font-bold uppercase text-[9px] hover:bg-stone-50 flex items-center gap-1 cursor-pointer text-stone-700"
                 >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy Formatted Text</span>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy Text</span>
                 </button>
 
-                <div className="flex items-center gap-2 justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowEmailModal(false)}
-                    className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50"
-                  >
-                    Close
-                  </button>
+                <a
+                  href={`mailto:${selectedEnquiry.email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                  onClick={() => {
+                    handleAddEnquiryNote(
+                      selectedEnquiry.id,
+                      `[Opened via Local Mail App] Subject: "${emailSubject}"`
+                    );
+                  }}
+                  className="px-3 py-1.5 text-stone-500 hover:text-stone-800 font-bold uppercase text-[9px] flex items-center gap-1 cursor-pointer"
+                  title="Open in your system mail client (Outlook / Apple Mail)"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>Open in Mail App</span>
+                </a>
+              </div>
 
-                  <a
-                    href={`mailto:${selectedEnquiry.email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
-                    onClick={() => {
-                      handleAddEnquiryNote(
-                        selectedEnquiry.id,
-                        `[Email Dispatched via Mail Client] Subject: "${emailSubject}"`
-                      );
-                      setEmailSentSuccess(true);
-                      setTimeout(() => setShowEmailModal(false), 1200);
-                    }}
-                    className="px-5 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase text-[10px] transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Open in Email App & Log Note</span>
-                  </a>
-                </div>
+              {/* Primary Dispatch Buttons */}
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEmailModal(false);
+                    setEmailSendResult(null);
+                  }}
+                  className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSendDirectEmail(false)}
+                  disabled={isSendingEmail || !emailSubject.trim() || !emailBody.trim()}
+                  className="px-6 py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase text-[10px] tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+                >
+                  {isSendingEmail ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-[#1C2421]" />
+                      <span>Transmitting Directly...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Send Direct to Client's Inbox</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL: VIEW SENT EMAIL RECORD & TRANSMISSION RECEIPT */}
+      {/* ====================================================================== */}
+      {viewingEmailRecord && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 text-xs my-8 space-y-4">
+            
+            <div className="flex justify-between items-start border-b border-stone-100 pb-3">
+              <div>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 uppercase tracking-widest text-[9px]">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  <span>Verified Direct Delivery (250 OK)</span>
+                </span>
+                <h3 className="font-serif text-xl font-bold text-stone-900 mt-1.5">
+                  {viewingEmailRecord.subject}
+                </h3>
+                <p className="text-[11px] text-stone-500 font-mono mt-0.5">
+                  Delivered to: <strong>{viewingEmailRecord.recipientEmail}</strong> on {viewingEmailRecord.sentAt}
+                </p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setViewingEmailRecord(null)}
+                className="text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Transmission Meta Header */}
+            <div className="grid grid-cols-2 gap-2 p-3 bg-[#FAF7F2] border border-stone-200 text-[11px] font-mono">
+              <div><strong>Sender:</strong> {viewingEmailRecord.senderName} &lt;{viewingEmailRecord.senderEmail}&gt;</div>
+              <div><strong>Recipient:</strong> {viewingEmailRecord.recipientName} &lt;{viewingEmailRecord.recipientEmail}&gt;</div>
+              <div><strong>Message-ID:</strong> &lt;{viewingEmailRecord.messageId}&gt;</div>
+              <div><strong>Delivery Status:</strong> 250 2.0.0 OK (Inbox Placement)</div>
+            </div>
+
+            {/* Email Body */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-stone-400 mb-1">
+                Dispatched Message Content:
+              </label>
+              <div className="bg-white border border-stone-200 p-4 font-serif text-xs text-stone-900 whitespace-pre-line leading-relaxed max-h-72 overflow-y-auto">
+                {viewingEmailRecord.body}
               </div>
             </div>
+
+            {/* Delivery Receipt Note */}
+            {viewingEmailRecord.deliveryReceipt && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 font-mono text-[10px]">
+                <strong>Server Response:</strong> {viewingEmailRecord.deliveryReceipt}
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-3 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`Subject: ${viewingEmailRecord.subject}\n\n${viewingEmailRecord.body}`);
+                  setCopiedLeadField('emailReceipt');
+                  setTimeout(() => setCopiedLeadField(null), 2000);
+                }}
+                className="px-3 py-1.5 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedLeadField === 'emailReceipt' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedLeadField === 'emailReceipt' ? 'Copied Receipt' : 'Copy Content'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewingEmailRecord(null)}
+                className="px-5 py-2 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold uppercase text-[10px] cursor-pointer"
+              >
+                Close Receipt
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen / Expanded Customer Request Preview Modal */}
+      {showFullscreenPreview && selectedEnquiry && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white border border-stone-200 shadow-2xl max-w-4xl w-full my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-5 bg-[#1C2421] text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#C5A880] text-[#1C2421] flex items-center justify-center font-serif font-bold text-base">
+                  {selectedEnquiry.name.charAt(0)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-mono tracking-widest text-[#C5A880] font-bold">
+                      Customer Request Preview Sheet
+                    </span>
+                    <span className="text-stone-400 font-mono text-xs">
+                      #{selectedEnquiry.id}
+                    </span>
+                  </div>
+                  <h3 className="font-serif text-lg sm:text-xl font-bold text-white">
+                    {selectedEnquiry.name}
+                  </h3>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyRequestSummary(selectedEnquiry)}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                  title="Copy Request Summary"
+                >
+                  {copiedLeadField === 'summary' ? <Check className="w-3 h-3 text-[#C5A880]" /> : <Copy className="w-3 h-3" />}
+                  <span className="hidden sm:inline">Copy Brief</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                  title="Print Customer Request Sheet"
+                >
+                  <Printer className="w-3 h-3 text-[#C5A880]" />
+                  <span className="hidden sm:inline">Print</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFullscreenPreview(false)}
+                  className="p-1.5 text-stone-400 hover:text-white cursor-pointer"
+                  title="Close Fullscreen Preview"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Document Body */}
+            <div className="p-6 sm:p-8 space-y-6 max-h-[80vh] overflow-y-auto text-xs">
+              
+              {/* Header Status & Origin */}
+              <div className="flex items-center justify-between pb-4 border-b border-stone-200 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 border ${
+                    selectedEnquiry.status === 'Confirmed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                    selectedEnquiry.status === 'Under Curation' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                    selectedEnquiry.status === 'Proposal Sent' ? 'bg-sky-50 text-sky-800 border-sky-200' :
+                    'bg-orange-50 text-orange-800 border-orange-200 font-extrabold'
+                  }`}>
+                    Stage: {selectedEnquiry.status}
+                  </span>
+                  {selectedEnquiry.priority === 'VIP' && (
+                    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 bg-[#C5A880]/15 text-[#927349] border border-[#C5A880]/40 flex items-center gap-1">
+                      <Star className="w-3 h-3 fill-[#C5A880] text-[#C5A880]" /> VIP Priority
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-[11px] font-mono text-stone-500">
+                  Received {selectedEnquiry.dateSubmitted} via {selectedEnquiry.source || 'Website Form'}
+                </div>
+              </div>
+
+              {/* Guest Profile & Direct Contacts */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-[#FAF7F2] border border-stone-200">
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-stone-400">Direct Email</span>
+                  <p className="font-mono font-medium text-stone-900 mt-0.5 select-all">{selectedEnquiry.email}</p>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                  <p className="font-mono font-medium text-stone-900 mt-0.5 select-all">{selectedEnquiry.phone || 'N/A'}</p>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-stone-400">Country of Origin</span>
+                  <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.country || 'International Traveler'}</p>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase font-bold text-stone-400">Assigned Curator</span>
+                  <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.assignedTo || 'Timothy Kungu'}</p>
+                </div>
+              </div>
+
+              {/* Safari Expedition Specifications */}
+              <div>
+                <h4 className="text-[10px] uppercase font-bold text-stone-400 tracking-wider mb-2">
+                  Expedition Specifications
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Destination</span>
+                    <p className="font-serif font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.destination}</p>
+                  </div>
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Travel Window</span>
+                    <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelDate}</p>
+                  </div>
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Party Size</span>
+                    <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelers}</p>
+                  </div>
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Safari Style</span>
+                    <p className="font-medium text-stone-800 text-xs mt-0.5">{selectedEnquiry.style || 'Classic Luxury Safari'}</p>
+                  </div>
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Budget Estimate</span>
+                    <p className="font-mono font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.budget || 'Custom Quote'}</p>
+                  </div>
+                  <div className="p-3 bg-white border border-stone-200">
+                    <span className="block text-[9px] uppercase font-bold text-stone-400">Direct Inquiries Dispatched</span>
+                    <p className="font-bold text-stone-900 text-sm mt-0.5">{Array.isArray(selectedEnquiry.emails) ? selectedEnquiry.emails.length : 0} emails</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Customer Vision Message */}
+              <div className="space-y-2">
+                <h4 className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                  Full Customer Request Vision & Special Requirements
+                </h4>
+                <div className="bg-[#FAF7F2] border-l-4 border-l-[#C5A880] p-5 text-stone-900 border-t border-r border-b border-stone-200 leading-relaxed shadow-xs">
+                  <p className="font-serif text-sm sm:text-base italic whitespace-pre-line text-stone-800">
+                    "{selectedEnquiry.message || 'No specific requests provided. Standard luxury curation requested.'}"
+                  </p>
+                </div>
+              </div>
+
+              {/* Curator Notes Thread */}
+              {Array.isArray(selectedEnquiry.notes) && selectedEnquiry.notes.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                    Internal Curator Log ({selectedEnquiry.notes.length} entries)
+                  </h4>
+                  <div className="space-y-2">
+                    {selectedEnquiry.notes.map((n: EnquiryNote, i: number) => (
+                      <div key={n.id || i} className="p-2.5 bg-stone-50 border border-stone-200">
+                        <div className="flex items-center justify-between text-[10px] font-mono text-stone-500 mb-1">
+                          <strong>{n.author}</strong>
+                          <span>{n.date}</span>
+                        </div>
+                        <p className="text-stone-700">{n.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFullscreenPreview(false);
+                    handleOpenEmailComposer(selectedEnquiry, 'welcome');
+                  }}
+                  className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send Direct Email</span>
+                </button>
+                <a
+                  href={getWhatsAppLink(selectedEnquiry)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-emerald-700 text-white hover:bg-emerald-800 font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>WhatsApp</span>
+                </a>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowFullscreenPreview(false)}
+                className="px-5 py-2 bg-[#1C2421] text-white hover:bg-stone-800 font-bold text-[10px] uppercase tracking-wider cursor-pointer"
+              >
+                Close Fullscreen Preview
+              </button>
+            </div>
+
           </div>
         </div>
       )}

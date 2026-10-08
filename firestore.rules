@@ -106,6 +106,7 @@ service cloud.firestore {
              (!('assignedTo' in data) || (data.assignedTo is string && data.assignedTo.size() <= 150)) &&
              (!('budget' in data) || (data.budget is string && data.budget.size() <= 100)) &&
              (!('source' in data) || (data.source is string && data.source.size() <= 100)) &&
+             (!('emails' in data) || (data.emails is list && data.emails.size() <= 100)) &&
              (!('notes' in data) || (data.notes is list && data.notes.size() <= 100));
     }
 

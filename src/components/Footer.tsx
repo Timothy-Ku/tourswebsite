@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Phone, MapPin, Send, Globe } from 'lucide-react';
+import { trackEvent, trackWhatsAppClick } from '../utils/analytics';
 
 interface FooterProps {
   onNavigate: (hash: string) => void;
@@ -12,6 +13,10 @@ export default function Footer({ onNavigate }: FooterProps) {
   const handleSubscribe = (e: React.FormEvent) => {
     e.preventDefault();
     if (email.trim()) {
+      trackEvent('subscribe_newsletter', {
+        email_domain: email.split('@')[1] || 'unknown',
+        source: 'footer_newsletter'
+      });
       setSubscribed(true);
       setEmail('');
       setTimeout(() => setSubscribed(false), 5000);
@@ -128,14 +133,24 @@ export default function Footer({ onNavigate }: FooterProps) {
           </div>
 
           <div className="space-y-2.5 text-xs text-stone-400 border-t border-white/5 pt-4">
-            <div className="flex items-center gap-2">
+            <a 
+              href="https://wa.me/254700000000?text=Hello%20KAGZ%20Safaris%20Concierge" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              onClick={() => trackWhatsAppClick('Footer Contact')}
+              className="flex items-center gap-2 hover:text-[#C5A880] transition-colors"
+            >
               <Phone className="w-4 h-4 text-[#C5A880]" />
-              <span>+254 700 000000 (WhatsApp)</span>
-            </div>
-            <div className="flex items-center gap-2">
+              <span>+254 700 000000 (WhatsApp Concierge)</span>
+            </a>
+            <a 
+              href="mailto:concierge@kagztravel.com"
+              onClick={() => trackEvent('click_email_link', { source: 'footer' })}
+              className="flex items-center gap-2 hover:text-[#C5A880] transition-colors"
+            >
               <Mail className="w-4 h-4 text-[#C5A880]" />
               <span>concierge@kagztravel.com</span>
-            </div>
+            </a>
           </div>
         </div>
       </div>

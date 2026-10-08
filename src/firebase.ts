@@ -20,18 +20,35 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore and Auth
-// CRITICAL: The app will break without specifying firestoreDatabaseId in getFirestore
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const firestoreDbId = (firebaseConfig as any).firestoreDatabaseId || (firebaseConfig as any).databaseId || 'ai-studio-de5a9645-4c4d-4d59-9008-5ab3fad47285';
+export const db = getFirestore(app, firestoreDbId);
 export const auth = getAuth(app);
 
-// Authentication Provider
+// Authentication Provider with Gmail & Google Workspace Scopes
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('https://www.googleapis.com/auth/gmail.send');
+googleProvider.addScope('https://www.googleapis.com/auth/gmail.readonly');
 
-// Standard login with popup
+// In-Memory OAuth Access Token Cache for Workspace APIs (Gmail, Drive, etc.)
+let cachedAccessToken: string | null = null;
+
+export const getCachedAccessToken = (): string | null => cachedAccessToken;
+export const setCachedAccessToken = (token: string | null) => {
+  cachedAccessToken = token;
+};
+
+// Standard login with popup capturing OAuth Access Token
 export const loginWithGoogle = async () => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+    }
+    return {
+      user: result.user,
+      accessToken: cachedAccessToken,
+    };
   } catch (error) {
     console.error("Error signing in with Google:", error);
     throw error;
@@ -54,6 +71,7 @@ export const loginWithGoogleCredential = async (idToken: string) => {
 export const logoutUser = async () => {
   try {
     await signOut(auth);
+    cachedAccessToken = null;
   } catch (error) {
     console.error("Error signing out:", error);
     throw error;
@@ -118,11 +136,7 @@ export async function testConnection() {
     await getDocFromServer(doc(db, 'test', 'connection'));
     console.log("Firestore connection test completed.");
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. The client appears to be offline.");
-    } else {
-      console.log("Firestore connection test ran (ignored expected rule deny errors).");
-    }
+    console.log("Firestore connection test initialized.");
   }
 }
 

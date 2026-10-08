@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { 
+  initGoogleAnalytics, 
+  trackPageView, 
+  trackEnquirySubmit,
+  trackDestinationView,
+  trackTourView,
+  trackArticleView,
+  trackEvent,
+  trackWhatsAppClick
+} from './utils/analytics';
+import { 
   Compass, 
   MapPin, 
   Calendar, 
@@ -353,8 +363,17 @@ export default function App() {
         handleFirestoreError(err, OperationType.CREATE, `enquiries/${id}`);
       } catch (e) {}
     }
+    
+    // Track Google Analytics lead conversion event
+    trackEnquirySubmit(newEnq.destination, newEnq.travelers, newEnq.style);
+    
     setPlanSuccessData(enquiryData);
   };
+
+  // Initialize Google Analytics on App Mount
+  useEffect(() => {
+    initGoogleAnalytics();
+  }, []);
 
   // Hash-based client routing
   useEffect(() => {
@@ -364,6 +383,23 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  // Track GA Pageviews and specific item view interactions on route/hash change
+  useEffect(() => {
+    const activeRoute = parseRoute();
+    trackPageView(currentHash || '#/', `KAGZ Safaris - ${activeRoute.page}`);
+
+    if (activeRoute.page === 'destination' && activeRoute.id) {
+      const dest = destinations.find(d => d.id === activeRoute.id);
+      trackDestinationView(activeRoute.id, dest?.name || activeRoute.id);
+    } else if (activeRoute.page === 'tour' && activeRoute.id) {
+      const tour = tours.find(t => t.id === activeRoute.id);
+      trackTourView(activeRoute.id, tour?.name || activeRoute.id);
+    } else if (activeRoute.page === 'blog' && activeRoute.id) {
+      const blog = blogs.find(b => b.id === activeRoute.id);
+      trackArticleView(activeRoute.id, blog?.title || activeRoute.id);
+    }
+  }, [currentHash, destinations, tours, blogs]);
 
   const navigateTo = (hash: string) => {
     window.location.hash = hash;
