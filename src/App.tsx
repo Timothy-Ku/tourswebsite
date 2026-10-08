@@ -3175,7 +3175,6 @@ function AdminDashboardView({
   const isStaffAuthenticated = isAdminUser;
 
   if (!isStaffAuthenticated) {
-    const isCustomDomain = window.location.hostname !== 'localhost' && !window.location.hostname.endsWith('.run.app');
     const params = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
     const isRedirectingBack = params.has('redirect_back');
 
@@ -3191,100 +3190,60 @@ function AdminDashboardView({
           {isRedirectingBack && (
             <div className="mb-6 p-4 bg-[#C5A880]/10 border border-[#C5A880]/30 rounded text-stone-850 text-xs text-left">
               <p className="font-bold mb-1">🔑 Sandbox Authentication Active</p>
-              <p className="font-light text-stone-600">Once you complete Google Authentication on this secure sandbox domain, you will be redirected back to your live Vercel dashboard automatically.</p>
+              <p className="font-light text-stone-600">Completing secure passwordless verification on this sandbox domain. You will be redirected back to your live Vercel dashboard automatically.</p>
             </div>
           )}
 
-          {/* Option A: Google/Gmail Auth */}
-          <div className="mb-6 pb-2 space-y-3">
-            <h2 className="text-stone-700 text-xs font-bold uppercase tracking-wider text-left border-b border-stone-100 pb-1.5 mb-2">Option 1: Sign in with Google</h2>
-            {isCustomDomain ? (
-              <>
-                {/* Custom Vercel Redirect button (Recommended) */}
-                <button
-                  type="button"
-                  onClick={handleSandboxRedirect}
-                  className="w-full py-3 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2 border border-stone-800"
-                >
-                  <svg className="w-4 h-4 fill-current text-[#C5A880]" viewBox="0 0 24 24">
-                    <path d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
-                    <path d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
-                    <path d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
-                    <path d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
-                  </svg>
-                  <span>Google Sign-In (Vercel Fix)</span>
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                className="w-full py-3 bg-[#FAF7F2] hover:bg-[#EADCC9]/20 border border-[#C5A880]/30 text-stone-800 font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer flex items-center justify-center gap-2"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.48 14.98 1 12 1 7.35 1 3.37 3.65 1.39 7.5l3.85 2.99C6.18 7.02 8.84 5.04 12 5.04z"/>
-                  <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.46c-.29 1.48-1.14 2.73-2.42 3.58v2.97h3.89c2.28-2.1 3.56-5.19 3.56-8.71z"/>
-                  <path fill="#FBBC05" d="M5.24 14.51c-.24-.72-.38-1.5-.38-2.31s.14-1.59.38-2.31L1.39 6.9C.5 8.7 0 10.7 0 12.8s.5 4.1 1.39 5.9l3.85-2.99z"/>
-                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.89-2.97c-1.09.73-2.48 1.17-4.07 1.17-3.16 0-5.82-1.98-6.76-4.94L1.39 16.3C3.37 20.15 7.35 23 12 23z"/>
-                </svg>
-                <span>Sign in with Google</span>
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between text-[10px] text-stone-400 font-bold uppercase py-4">
-            <div className="h-px bg-stone-200 flex-grow mr-3"></div>
-            <span>or</span>
-            <div className="h-px bg-stone-200 flex-grow ml-3"></div>
-          </div>
-
-          {/* Option B: Passwordless Email Link Auth */}
+          {/* Secure Email Magic Link Sign-In */}
           <div className="mb-6 text-left">
-            <h2 className="text-stone-700 text-xs font-bold uppercase tracking-wider border-b border-stone-100 pb-1.5 mb-3">Option 2: Magic Link to Inbox</h2>
+            <h2 className="text-[#C5A880] text-xs font-bold uppercase tracking-[0.15em] border-b border-stone-150 pb-2 mb-4 font-serif">Secure Email Sign-In</h2>
             {emailLinkSent ? (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 text-xs space-y-1.5">
-                <p className="font-bold">✉️ Magic link sent successfully!</p>
-                <p className="font-light">We sent a secure, passwordless magic login link to <strong>{loginEmail}</strong>. Please check your inbox (and spam folder) and click the link to log in instantly!</p>
+              <div className="p-5 bg-emerald-50 border border-emerald-200 rounded text-emerald-800 text-xs space-y-2 leading-relaxed">
+                <p className="font-bold text-sm">✉️ Magic link sent successfully!</p>
+                <p className="font-light text-stone-700">
+                  We sent a secure, passwordless magic login link to <strong>{loginEmail}</strong>. 
+                  Please check your inbox (and spam folder) and click the link to log in instantly!
+                </p>
                 <button 
                   type="button" 
                   onClick={() => setEmailLinkSent(false)} 
-                  className="text-stone-500 hover:text-stone-800 underline font-semibold text-[10px] uppercase mt-2 block"
+                  className="text-stone-500 hover:text-stone-800 underline font-semibold text-[10px] uppercase mt-3 block cursor-pointer"
                 >
                   Send another link
                 </button>
               </div>
             ) : (
-              <form onSubmit={handleSendEmailLink} className="space-y-3">
-                <p className="text-stone-500 text-[11px] leading-relaxed mb-2 font-light">
-                  Type in your administrator email below. We'll instantly email you a passwordless magic sign-in link.
+              <form onSubmit={handleSendEmailLink} className="space-y-4">
+                <p className="text-stone-500 text-[11px] leading-relaxed font-light">
+                  Enter your administrator email below to receive a secure, passwordless magic login link directly in your inbox.
                 </p>
-                <div className="flex flex-col gap-2">
+                <div className="space-y-3">
                   <input
                     type="email"
                     required
                     placeholder="Enter admin email (e.g. kungutim541@gmail.com)"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] text-xs text-stone-900 rounded-none placeholder-stone-400"
+                    className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-3 focus:outline-none focus:border-[#C5A880] text-xs text-stone-900 rounded-none placeholder-stone-400 font-sans"
                   />
                   <button
                     type="submit"
                     disabled={emailLinkSending}
-                    className="w-full py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer text-center"
+                    className="w-full py-3 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-xs uppercase tracking-widest transition-all rounded-full cursor-pointer disabled:opacity-50 text-center"
                   >
                     {emailLinkSending ? 'Sending Magic Link...' : 'Email Me Magic Sign-In Link'}
                   </button>
                 </div>
               </form>
             )}
-            <p className="text-[9px] text-stone-400 mt-3 font-mono text-center">Authorized Administrator: kungutim541@gmail.com</p>
+            <p className="text-[10px] text-stone-400 mt-4 font-mono text-center">Authorized Administrator: kungutim541@gmail.com</p>
           </div>
 
-          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed text-center">{loginError}</p>}
+          {loginError && <p className="text-rose-600 text-xs font-semibold mb-4 leading-relaxed text-center font-sans">{loginError}</p>}
 
           <button 
             onClick={() => onNavigate('#/')}
-            className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer"
+            className="text-stone-400 hover:text-[#C5A880] text-xs font-semibold underline mt-6 block mx-auto cursor-pointer font-sans"
           >
             &larr; Return to Visitor Site
           </button>
