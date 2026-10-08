@@ -417,3 +417,169 @@ export const galleryData: GalleryItem[] = [
   { id: "5", src: REAL_PHOTOS.kilimanjaroGiraffe, alt: "Mount Kilimanjaro peak rising above the mist", category: "Adventure" },
   { id: "6", src: REAL_PHOTOS.safariGoldenHour, alt: "Elephants marching across Amboseli", category: "Safari" }
 ];
+
+export interface EnquiryNote {
+  id: string;
+  author: string;
+  date: string;
+  text: string;
+}
+
+export interface Enquiry {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  country?: string;
+  destination: string;
+  travelDate: string;
+  travelers: string;
+  style: string;
+  message: string;
+  status: 'New Enquiry' | 'Under Curation' | 'Proposal Sent' | 'Confirmed' | 'Closed';
+  dateSubmitted: string;
+  priority?: 'VIP' | 'High' | 'Standard' | 'Flexible';
+  assignedTo?: string;
+  budget?: string;
+  source?: string;
+  notes?: EnquiryNote[];
+}
+
+export const DEFAULT_ENQUIRIES: Enquiry[] = [
+  {
+    id: "enq-1728392100",
+    name: "Lord Alistair & Lady Cynthia Montgomery",
+    email: "montgomery.safaris@cotswolds.uk",
+    phone: "+44 7911 123456",
+    country: "United Kingdom",
+    destination: "Kenya (Maasai Mara & Samburu)",
+    travelDate: "August 2027",
+    travelers: "2 guests (Couple)",
+    style: "Ultra-Luxury Private Mobile Concessions",
+    message: "Planning our 25th wedding anniversary safari. We require front-row views of the Mara River wildebeest crossings, private open-sided Land Cruisers, exclusive fly-in Cessna transfers, and a private sunrise hot air balloon with bush champagne breakfast.",
+    status: "Under Curation",
+    priority: "VIP",
+    assignedTo: "Amara Kagz",
+    budget: "$32,000 - $38,000",
+    source: "Plan Your Trip Concierge",
+    dateSubmitted: "2026-10-06",
+    notes: [
+      {
+        id: "note-1",
+        author: "Amara Kagz",
+        date: "2026-10-06 14:30",
+        text: "Held provisional dates at Cottar's 1920s Safari Camp and Mara Plains. Client requested private naturalist guide with extensive big-cat tracking pedigree."
+      },
+      {
+        id: "note-2",
+        author: "Timothy Kungu",
+        date: "2026-10-07 10:15",
+        text: "Checked Wilson Airport charter availability for direct flight to Keekorok Airstrip. Custom proposal drafted."
+      }
+    ]
+  },
+  {
+    id: "enq-1728391800",
+    name: "Dr. Sophia Laurent & Family",
+    email: "sophia.laurent@sorbonne-med.fr",
+    phone: "+33 6 12 34 56 78",
+    country: "France",
+    destination: "Rwanda & Uganda",
+    travelDate: "Dec 26, 2026 - Jan 6, 2027",
+    travelers: "4 guests (2 adults, 2 teens: 16 & 18)",
+    style: "Primate Trekking & Luxury Eco-Lodges",
+    message: "Our family seeks habituated mountain gorilla permits in Volcanoes National Park (2 treks) combined with Bwindi Impenetrable Forest and chimpanzees in Kibale. We require luxury lodge suites with roaring fireplaces.",
+    status: "New Enquiry",
+    priority: "High",
+    assignedTo: "Timothy Kungu",
+    budget: "$24,000 - $28,000",
+    source: "Tour Detail: Primate Grand Traverse",
+    dateSubmitted: "2026-10-08",
+    notes: [
+      {
+        id: "note-3",
+        author: "Timothy Kungu",
+        date: "2026-10-08 08:45",
+        text: "Contacted Rwanda Development Board to hold 4 gorilla permits for Dec 29. Need passport copies from client to lock booking."
+      }
+    ]
+  },
+  {
+    id: "enq-1728391200",
+    name: "Marcus & Elena Vance",
+    email: "marcus.vance@techventures.io",
+    phone: "+1 (415) 890-2341",
+    country: "United States (California)",
+    destination: "Tanzania & Zanzibar",
+    travelDate: "July 12 - July 24, 2027",
+    travelers: "2 guests",
+    style: "Bush-to-Beach Signature Expedition",
+    message: "Looking for 6 nights exploring Northern Serengeti river crossings followed by 5 nights on a private barefoot luxury atoll in Zanzibar (Mnemba or Matemwe). Require private dhow sundowner and private chef.",
+    status: "Confirmed",
+    priority: "VIP",
+    assignedTo: "David Ochieng",
+    budget: "$21,500",
+    source: "Direct Concierge Referral",
+    dateSubmitted: "2026-10-05",
+    notes: [
+      {
+        id: "note-4",
+        author: "David Ochieng",
+        date: "2026-10-05 11:20",
+        text: "30% Safari commitment deposit processed via luxury wire transfer. Vouchers sent for Serengeti Four Seasons & Mnemba Island lodge."
+      },
+      {
+        id: "note-5",
+        author: "David Ochieng",
+        date: "2026-10-06 15:00",
+        text: "Guest dietary requirements noted: Elena is gluten-free and pescatarian. Head safari chef notified."
+      }
+    ]
+  },
+  {
+    id: "enq-1728390500",
+    name: "Hiroshi & Keiko Tanaka",
+    email: "tanaka.h@ginzamedia.jp",
+    phone: "+81 90 4567 8901",
+    country: "Japan",
+    destination: "Kenya (Maasai Mara & Amboseli)",
+    travelDate: "September 15 - September 26, 2027",
+    travelers: "2 guests (Wildlife Photographers)",
+    style: "Specialist Wildlife Photography Safari",
+    message: "Both professional photographers with telephoto 600mm primes. We require customized open Land Cruisers equipped with beanbags, gimbal mounting plates, low-angle side hatches, and an expert driver experienced with predator framing.",
+    status: "Proposal Sent",
+    priority: "Standard",
+    assignedTo: "Amara Kagz",
+    budget: "$16,000 - $19,000",
+    source: "Contact Concierge Form",
+    dateSubmitted: "2026-10-04",
+    notes: [
+      {
+        id: "note-6",
+        author: "Amara Kagz",
+        date: "2026-10-05 16:40",
+        text: "Sent customized photographic itinerary with private vehicle option at Mara North Conservancy. Awaiting client review of photographic gear specs."
+      }
+    ]
+  },
+  {
+    id: "enq-1728389800",
+    name: "Klaus & Greta Becker",
+    email: "klaus.becker@berlin-architekten.de",
+    phone: "+49 171 2345678",
+    country: "Germany",
+    destination: "Kenya (Amboseli & Tsavo West)",
+    travelDate: "November 5 - November 14, 2026",
+    travelers: "3 guests (2 adults, 1 child)",
+    style: "Classic Tented Safari & Walking Bush Expeditions",
+    message: "Desire to experience legendary big tusker elephants under Mount Kilimanjaro and Mzima Springs hippos. Looking for eco-conscious camps with guided walking safaris with local Maasai trackers.",
+    status: "New Enquiry",
+    priority: "Standard",
+    assignedTo: "David Ochieng",
+    budget: "$11,500 - $14,000",
+    source: "Amboseli Destination Page",
+    dateSubmitted: "2026-10-08",
+    notes: []
+  }
+];
+

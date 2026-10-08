@@ -39,7 +39,17 @@ import {
   Download,
   Check,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Calendar,
+  Clock,
+  DollarSign,
+  Send,
+  FileSpreadsheet,
+  UserCheck,
+  AlertCircle,
+  Briefcase,
+  Filter,
+  ArrowUpDown
 } from 'lucide-react';
 import { 
   Destination, 
@@ -47,6 +57,9 @@ import {
   Article, 
   Testimonial, 
   GalleryItem,
+  Enquiry,
+  EnquiryNote,
+  DEFAULT_ENQUIRIES,
   destinationsData, 
   toursData, 
   blogData, 
@@ -340,8 +353,38 @@ export default function AdminDashboardView({
   });
 
   // Editing Forms State
-  const [selectedEnquiry, setSelectedEnquiry] = useState<any | null>(null);
+  const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | any | null>(null);
   const [filterStatus, setFilterStatus] = useState('All');
+  const [filterPriority, setFilterPriority] = useState('All');
+  const [filterCurator, setFilterCurator] = useState('All');
+  const [enquirySort, setEnquirySort] = useState<'newest' | 'oldest' | 'priority'>('newest');
+
+  // Enquiries Modals & Interaction States
+  const [showAddEnquiryModal, setShowAddEnquiryModal] = useState(false);
+  const [newEnquiryForm, setNewEnquiryForm] = useState<Partial<Enquiry>>({
+    name: '',
+    email: '',
+    phone: '',
+    country: '',
+    destination: 'Kenya (Maasai Mara)',
+    travelDate: '',
+    travelers: '2 guests',
+    style: 'Classic Luxury Safari',
+    budget: '$15,000 - $22,000',
+    priority: 'Standard',
+    assignedTo: 'Timothy Kungu',
+    source: 'Telephone / Concierge Inbound',
+    message: ''
+  });
+  const [editingEnquiry, setEditingEnquiry] = useState<Enquiry | any | null>(null);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTemplateKey, setEmailTemplateKey] = useState<'welcome' | 'proposal' | 'followup' | 'confirmation'>('welcome');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [emailSentSuccess, setEmailSentSuccess] = useState(false);
+  const [newNoteText, setNewNoteText] = useState('');
+  const [copiedLeadField, setCopiedLeadField] = useState<string | null>(null);
+
   const [editingDest, setEditingDest] = useState<any | null>(null);
   const [editingTour, setEditingTour] = useState<any | null>(null);
   const [editingBlog, setEditingBlog] = useState<any | null>(null);
@@ -832,7 +875,94 @@ export default function AdminDashboardView({
     }
   };
 
-  // Enquiry status change & delete
+  // Helper for generating luxury email templates
+  const generateEmailContent = (
+    templateKey: 'welcome' | 'proposal' | 'followup' | 'confirmation',
+    enquiry: any
+  ) => {
+    const curator = sessionAdminName || 'Timothy Kungu';
+    const dest = enquiry?.destination || 'East Africa';
+    const guestName = enquiry?.name || 'Valued Guest';
+    const travelDate = enquiry?.travelDate || 'the upcoming season';
+    const travelers = enquiry?.travelers || '2 guests';
+    const style = enquiry?.style || 'Classic Luxury Safari';
+
+    if (templateKey === 'welcome') {
+      return {
+        subject: `Your Bespoke East Africa Safari Expedition | KAGZ Travel & Safaris`,
+        body: `Dear ${guestName},
+
+Thank you for your enquiry with KAGZ Travel & Safaris regarding your upcoming journey to ${dest} planned for ${travelDate}.
+
+Our senior safari design team is reviewing your bespoke preferences for ${travelers} (${style}). We would be delighted to schedule a brief private consultation call to discuss your wildlife priorities, preferred private conservancies, and bespoke aviation connections.
+
+Could you please let us know a convenient day and time for a phone or WhatsApp conversation?
+
+Warmest safari regards,
+
+${curator}
+Lead Safari Curator | KAGZ Travel & Safaris
+Nairobi • Arusha • Kigali`
+      };
+    } else if (templateKey === 'proposal') {
+      return {
+        subject: `Exclusive Safari Itinerary Proposal: ${dest} | KAGZ Travel & Safaris`,
+        body: `Dear ${guestName},
+
+We are thrilled to present your tailored safari expedition itinerary for ${dest}.
+
+EXPEDITION OVERVIEW:
+• Destination: ${dest}
+• Travel Window: ${travelDate}
+• Party Size: ${travelers}
+• Expedition Style: ${style}
+• Reference: #${enquiry?.id || 'KAGZ-LEAD'}
+
+Your itinerary includes dedicated private 4x4 open-sided Land Cruisers, premier luxury tented camps situated directly along wildlife corridors, and hand-selected professional naturalist guides. 
+
+Please review the provisional arrangements. We can customize any aspect, including private bush flights or private hot air balloon safaris.
+
+Warm regards,
+
+${curator}
+KAGZ Travel & Safaris`
+      };
+    } else if (templateKey === 'followup') {
+      return {
+        subject: `Following Up on Your Safari Proposal for ${dest} | KAGZ Travel`,
+        body: `Dear ${guestName},
+
+I hope this message finds you well. I am following up on the tailored itinerary we recently prepared for your upcoming expedition to ${dest} in ${travelDate}.
+
+Due to exceptionally high seasonal demand for boutique camps and limited national park conservation permits, luxury suites fill up months in advance. We would love to hold provisional suite reservations for you before space closes.
+
+Please let us know if you have any questions or if you would like us to modify any lodges or transit legs.
+
+Warm regards,
+
+${curator}
+KAGZ Travel & Safaris`
+      };
+    } else {
+      return {
+        subject: `Safari Confirmed: Welcome to KAGZ Safaris | Ref #${enquiry?.id || 'CONFIRMED'}`,
+        body: `Dear ${guestName},
+
+Jambo! It is our absolute pleasure to officially confirm your luxury safari expedition to ${dest} (${travelDate}).
+
+Your reservations across our private luxury camps and internal light aircraft charters are now locked in. Over the coming weeks, our concierge desk will provide your detailed pre-safari packing guide, health recommendations, and coordinate your private VIP arrival escort in Nairobi.
+
+Welcome to an unforgettable African adventure with KAGZ Travel.
+
+Warmest regards,
+
+${curator}
+KAGZ Travel & Safaris`
+      };
+    }
+  };
+
+  // Enquiry status change
   const handleUpdateStatus = async (id: string, newStatus: string) => {
     try {
       await setDoc(doc(db, 'enquiries', id), { status: newStatus }, { merge: true });
@@ -842,8 +972,156 @@ export default function AdminDashboardView({
     const updated = enquiries.map(e => e.id === id ? { ...e, status: newStatus } : e);
     setEnquiries(updated);
     localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
-    if (selectedEnquiry?.id === id) setSelectedEnquiry({ ...selectedEnquiry, status: newStatus });
+    if (selectedEnquiry?.id === id) {
+      setSelectedEnquiry({ ...selectedEnquiry, status: newStatus });
+    }
     addAuditLog('Lead Status Updated', `Enquiry #${id} marked as ${newStatus}`, 'BOOKING');
+  };
+
+  // Priority change
+  const handleUpdatePriority = async (id: string, newPriority: string) => {
+    try {
+      await setDoc(doc(db, 'enquiries', id), { priority: newPriority }, { merge: true });
+    } catch (err) {
+      console.warn("Firestore sync enquiry priority:", err);
+    }
+    const updated = enquiries.map(e => e.id === id ? { ...e, priority: newPriority } : e);
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    if (selectedEnquiry?.id === id) {
+      setSelectedEnquiry({ ...selectedEnquiry, priority: newPriority });
+    }
+    addAuditLog('Lead Priority Updated', `Enquiry #${id} priority set to ${newPriority}`, 'BOOKING');
+  };
+
+  // Assign curator
+  const handleAssignCurator = async (id: string, curatorName: string) => {
+    try {
+      await setDoc(doc(db, 'enquiries', id), { assignedTo: curatorName }, { merge: true });
+    } catch (err) {
+      console.warn("Firestore sync enquiry curator:", err);
+    }
+    const updated = enquiries.map(e => e.id === id ? { ...e, assignedTo: curatorName } : e);
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    if (selectedEnquiry?.id === id) {
+      setSelectedEnquiry({ ...selectedEnquiry, assignedTo: curatorName });
+    }
+    addAuditLog('Curator Reassigned', `Enquiry #${id} assigned to ${curatorName}`, 'STAFF');
+  };
+
+  // Add internal note to lead
+  const handleAddEnquiryNote = async (id: string, text: string) => {
+    if (!text.trim()) return;
+    const authorName = sessionAdminName || 'Safari Curator';
+    const newNote: EnquiryNote = {
+      id: 'note-' + Date.now(),
+      author: authorName,
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+      text: text.trim()
+    };
+    
+    const targetEnq = enquiries.find(e => e.id === id) || selectedEnquiry;
+    const existingNotes = Array.isArray(targetEnq?.notes) ? targetEnq.notes : [];
+    const updatedNotes = [...existingNotes, newNote];
+
+    try {
+      await setDoc(doc(db, 'enquiries', id), { notes: updatedNotes }, { merge: true });
+    } catch (err) {
+      console.warn("Firestore sync enquiry note:", err);
+    }
+
+    const updated = enquiries.map(e => e.id === id ? { ...e, notes: updatedNotes } : e);
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    if (selectedEnquiry?.id === id) {
+      setSelectedEnquiry({ ...selectedEnquiry, notes: updatedNotes });
+    }
+    setNewNoteText('');
+    addAuditLog('Curator Note Logged', `Added note to Lead #${id}: "${text.slice(0, 35)}..."`, 'BOOKING');
+  };
+
+  // Create new enquiry manually (phone / walk-in lead)
+  const handleCreateEnquiry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEnquiryForm.name) return;
+
+    const id = `enq-${Date.now()}`;
+    const newLead: Enquiry = {
+      id,
+      name: newEnquiryForm.name.trim(),
+      email: newEnquiryForm.email?.trim() || 'no-email@kagztravel.com',
+      phone: newEnquiryForm.phone?.trim() || 'N/A',
+      country: newEnquiryForm.country?.trim() || 'International',
+      destination: newEnquiryForm.destination || 'Kenya (Maasai Mara)',
+      travelDate: newEnquiryForm.travelDate || 'Flexible / 2027',
+      travelers: newEnquiryForm.travelers || '2 guests',
+      style: newEnquiryForm.style || 'Classic Luxury Safari',
+      message: newEnquiryForm.message || 'Direct lead logged by concierge desk.',
+      status: (newEnquiryForm.status as any) || 'New Enquiry',
+      priority: (newEnquiryForm.priority as any) || 'Standard',
+      assignedTo: newEnquiryForm.assignedTo || sessionAdminName || 'Timothy Kungu',
+      budget: newEnquiryForm.budget || '$15,000 - $25,000',
+      source: newEnquiryForm.source || 'Telephone / Concierge Inbound',
+      dateSubmitted: new Date().toISOString().split('T')[0],
+      notes: [
+        {
+          id: 'note-init',
+          author: sessionAdminName || 'Admin',
+          date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          text: `Inbound lead logged into system via ${newEnquiryForm.source || 'Concierge Desk'}.`
+        }
+      ]
+    };
+
+    try {
+      await setDoc(doc(db, 'enquiries', id), newLead);
+    } catch (err) {
+      console.warn("Firestore sync new enquiry:", err);
+    }
+
+    const updated = [newLead, ...enquiries];
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    setSelectedEnquiry(newLead);
+    setShowAddEnquiryModal(false);
+    setNewEnquiryForm({
+      name: '',
+      email: '',
+      phone: '',
+      country: '',
+      destination: 'Kenya (Maasai Mara)',
+      travelDate: '',
+      travelers: '2 guests',
+      style: 'Classic Luxury Safari',
+      budget: '$15,000 - $22,000',
+      priority: 'Standard',
+      assignedTo: 'Timothy Kungu',
+      source: 'Telephone / Concierge Inbound',
+      message: ''
+    });
+    addAuditLog('Inbound Lead Logged', `Logged new lead for ${newLead.name}`, 'BOOKING');
+  };
+
+  // Save edited enquiry
+  const handleSaveEditedEnquiry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEnquiry?.id || !editingEnquiry.name) return;
+
+    try {
+      await setDoc(doc(db, 'enquiries', editingEnquiry.id), editingEnquiry, { merge: true });
+    } catch (err) {
+      console.warn("Firestore update enquiry:", err);
+    }
+
+    const updated = enquiries.map(enq => enq.id === editingEnquiry.id ? editingEnquiry : enq);
+    setEnquiries(updated);
+    localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
+    if (selectedEnquiry?.id === editingEnquiry.id) {
+      setSelectedEnquiry(editingEnquiry);
+    }
+    setEditingEnquiry(null);
+    addAuditLog('Lead Dossier Updated', `Modified details for #${editingEnquiry.id} (${editingEnquiry.name})`, 'BOOKING');
   };
 
   const handleDeleteEnquiry = async (id: string) => {
@@ -859,6 +1137,83 @@ export default function AdminDashboardView({
       setSelectedEnquiry(null);
       addAuditLog('Enquiry Deleted', `Removed lead record #${id}`, 'BOOKING');
     }
+  };
+
+  // Export Enquiries to CSV
+  const handleExportEnquiriesCSV = () => {
+    const listToExport = filteredEnquiries.length > 0 ? filteredEnquiries : enquiries;
+    const headers = [
+      'ID',
+      'Name',
+      'Email',
+      'Phone',
+      'Country',
+      'Destination',
+      'Travel Date',
+      'Travelers',
+      'Safari Style',
+      'Status',
+      'Priority',
+      'Assigned Curator',
+      'Estimated Budget',
+      'Source',
+      'Date Submitted',
+      'Notes Count',
+      'Client Message'
+    ];
+
+    const rows = listToExport.map(enq => [
+      `"${enq.id || ''}"`,
+      `"${(enq.name || '').replace(/"/g, '""')}"`,
+      `"${enq.email || ''}"`,
+      `"${enq.phone || ''}"`,
+      `"${enq.country || ''}"`,
+      `"${(enq.destination || '').replace(/"/g, '""')}"`,
+      `"${enq.travelDate || ''}"`,
+      `"${enq.travelers || ''}"`,
+      `"${(enq.style || '').replace(/"/g, '""')}"`,
+      `"${enq.status || ''}"`,
+      `"${enq.priority || 'Standard'}"`,
+      `"${enq.assignedTo || 'Unassigned'}"`,
+      `"${enq.budget || ''}"`,
+      `"${enq.source || ''}"`,
+      `"${enq.dateSubmitted || ''}"`,
+      Array.isArray(enq.notes) ? enq.notes.length : 0,
+      `"${(enq.message || '').replace(/"/g, '""').replace(/\\n/g, ' ')}"`
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `kagz-safari-enquiries-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addAuditLog('CSV Export Generated', `Exported ${listToExport.length} guest enquiries to CSV`, 'BOOKING');
+  };
+
+  // Open Email Composer
+  const handleOpenEmailComposer = (enquiry: any, templateKey: 'welcome' | 'proposal' | 'followup' | 'confirmation' = 'welcome') => {
+    setEmailTemplateKey(templateKey);
+    const { subject, body } = generateEmailContent(templateKey, enquiry);
+    setEmailSubject(subject);
+    setEmailBody(body);
+    setEmailSentSuccess(false);
+    setShowEmailModal(true);
+  };
+
+  // WhatsApp Link Helper
+  const getWhatsAppLink = (enquiry: any) => {
+    const rawPhone = enquiry?.phone || '';
+    const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
+    const curatorName = sessionAdminName || 'Timothy Kungu';
+    const message = encodeURIComponent(
+      `Jambo ${enquiry.name || 'there'}! This is ${curatorName} from KAGZ Travel & Safaris regarding your safari enquiry for ${enquiry.destination || 'East Africa'}. We are delighted to assist with your bespoke itinerary.`
+    );
+    return cleanPhone ? `https://wa.me/${cleanPhone}?text=${message}` : `https://wa.me/?text=${message}`;
   };
 
   // User Management Handlers
@@ -1337,10 +1692,39 @@ export default function AdminDashboardView({
      RENDER: AUTHENTICATED STAFF CMS & CONCIERGE DASHBOARD
      ============================================================================ */
 
+  // KPI Metrics for Inbound Enquiries
+  const newLeadsCount = enquiries.filter(e => e.status === 'New Enquiry').length;
+  const underCurationCount = enquiries.filter(e => e.status === 'Under Curation').length;
+  const proposalSentCount = enquiries.filter(e => e.status === 'Proposal Sent').length;
+  const confirmedCount = enquiries.filter(e => e.status === 'Confirmed').length;
+  const closedCount = enquiries.filter(e => e.status === 'Closed').length;
+  const vipCount = enquiries.filter(e => e.priority === 'VIP').length;
+
   const filteredEnquiries = enquiries.filter(enq => {
     const matchesStatus = filterStatus === 'All' || enq.status === filterStatus;
-    const matchesSearch = !searchQuery || [enq.name, enq.email, enq.destination, enq.message].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesStatus && matchesSearch;
+    const matchesPriority = filterPriority === 'All' || enq.priority === filterPriority;
+    const matchesCurator = filterCurator === 'All' || (enq.assignedTo === filterCurator || (!enq.assignedTo && filterCurator === 'Unassigned'));
+    const matchesSearch = !searchQuery || [
+      enq.name, 
+      enq.email, 
+      enq.phone,
+      enq.country,
+      enq.destination, 
+      enq.message,
+      enq.style,
+      enq.budget,
+      enq.assignedTo,
+      enq.source
+    ].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesStatus && matchesPriority && matchesCurator && matchesSearch;
+  }).sort((a, b) => {
+    if (enquirySort === 'newest') return (b.dateSubmitted || b.id || '').localeCompare(a.dateSubmitted || a.id || '');
+    if (enquirySort === 'oldest') return (a.dateSubmitted || a.id || '').localeCompare(b.dateSubmitted || b.id || '');
+    if (enquirySort === 'priority') {
+      const pMap: Record<string, number> = { VIP: 3, High: 2, Standard: 1, Flexible: 0 };
+      return (pMap[b.priority || 'Standard'] || 0) - (pMap[a.priority || 'Standard'] || 0);
+    }
+    return 0;
   });
 
   const filteredDests = destinations.filter(d => !searchQuery || [d.name, d.tagline, d.category].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase())));
@@ -1687,6 +2071,26 @@ export default function AdminDashboardView({
             </div>
 
             {/* Dynamic Add Buttons */}
+            {activeTab === 'enquiries' && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAddEnquiryModal(true)}
+                  className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Log Inbound Lead</span>
+                </button>
+                <button
+                  onClick={handleExportEnquiriesCSV}
+                  className="px-3 py-2 bg-white text-stone-700 hover:bg-[#FAF7F2] border border-stone-200 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                  title="Export guest enquiries to CSV"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-[#C5A880]" />
+                  <span className="hidden sm:inline">Export CSV</span>
+                </button>
+              </div>
+            )}
+
             {activeTab === 'destinations' && (
               <button
                 onClick={() => setEditingDest({ name: '', tagline: '', category: 'East Africa', image: '', intro: '', whyVisit: '', topExperiences: '', attractions: '', bestTimeToVisit: '', travelTips: '' })}
@@ -1781,118 +2185,787 @@ export default function AdminDashboardView({
         <div className="p-4 sm:p-6 lg:p-8 flex-1">
 
         {/* -------------------------------------------------------------------- */}
-        {/* VIEW TAB 1: ENQUIRIES LOG */}
+        {/* VIEW TAB 1: ENQUIRIES & GUEST REQUESTS CRM */}
         {/* -------------------------------------------------------------------- */}
         {activeTab === 'enquiries' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 space-y-4">
-              <div className="flex gap-2 mb-4 select-none">
-                {['All', 'New Enquiry', 'Under Curation', 'Confirmed'].map(st => (
+          <div className="space-y-6">
+
+            {/* Top Interactive Funnel KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+              <button
+                type="button"
+                onClick={() => setFilterStatus('All')}
+                className={`p-4 text-left border transition-all cursor-pointer shadow-sm ${
+                  filterStatus === 'All'
+                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-[#C5A880]'
+                    : 'bg-white hover:bg-stone-50 border-stone-200 text-stone-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${filterStatus === 'All' ? 'text-[#C5A880]' : 'text-stone-400'}`}>
+                    Total Leads
+                  </span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-none font-bold uppercase ${filterStatus === 'All' ? 'bg-[#C5A880]/20 text-[#C5A880]' : 'bg-stone-100 text-stone-600'}`}>
+                    All Inbound
+                  </span>
+                </div>
+                <p className="font-serif text-2xl font-bold">{enquiries.length}</p>
+                <p className={`text-[11px] mt-0.5 ${filterStatus === 'All' ? 'text-stone-300' : 'text-stone-500'}`}>
+                  Full enquiry pipeline
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterStatus('New Enquiry')}
+                className={`p-4 text-left border transition-all cursor-pointer shadow-sm relative overflow-hidden ${
+                  filterStatus === 'New Enquiry'
+                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-orange-500'
+                    : 'bg-white hover:bg-stone-50 border-stone-200 text-stone-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${filterStatus === 'New Enquiry' ? 'text-orange-400' : 'text-orange-600'}`}>
+                    New Enquiries
+                  </span>
+                  {newLeadsCount > 0 && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                    </span>
+                  )}
+                </div>
+                <p className="font-serif text-2xl font-bold text-orange-600">{newLeadsCount}</p>
+                <p className={`text-[11px] mt-0.5 ${filterStatus === 'New Enquiry' ? 'text-stone-300' : 'text-stone-500'}`}>
+                  Needs curator contact
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterStatus('Under Curation')}
+                className={`p-4 text-left border transition-all cursor-pointer shadow-sm ${
+                  filterStatus === 'Under Curation'
+                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-[#C5A880]'
+                    : 'bg-white hover:bg-stone-50 border-stone-200 text-stone-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${filterStatus === 'Under Curation' ? 'text-[#C5A880]' : 'text-amber-700'}`}>
+                    Under Curation
+                  </span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-none font-bold uppercase ${filterStatus === 'Under Curation' ? 'bg-[#C5A880]/20 text-[#C5A880]' : 'bg-amber-50 text-amber-800'}`}>
+                    Active
+                  </span>
+                </div>
+                <p className="font-serif text-2xl font-bold text-amber-700">{underCurationCount}</p>
+                <p className={`text-[11px] mt-0.5 ${filterStatus === 'Under Curation' ? 'text-stone-300' : 'text-stone-500'}`}>
+                  Designing custom itineraries
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterStatus('Proposal Sent')}
+                className={`p-4 text-left border transition-all cursor-pointer shadow-sm ${
+                  filterStatus === 'Proposal Sent'
+                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-sky-500'
+                    : 'bg-white hover:bg-stone-50 border-stone-200 text-stone-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${filterStatus === 'Proposal Sent' ? 'text-sky-300' : 'text-sky-700'}`}>
+                    Proposal Sent
+                  </span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-none font-bold uppercase ${filterStatus === 'Proposal Sent' ? 'bg-sky-500/20 text-sky-300' : 'bg-sky-50 text-sky-800'}`}>
+                    Quotes Out
+                  </span>
+                </div>
+                <p className="font-serif text-2xl font-bold text-sky-700">{proposalSentCount}</p>
+                <p className={`text-[11px] mt-0.5 ${filterStatus === 'Proposal Sent' ? 'text-stone-300' : 'text-stone-500'}`}>
+                  Awaiting guest approval
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterStatus('Confirmed')}
+                className={`p-4 text-left border transition-all cursor-pointer shadow-sm col-span-2 sm:col-span-1 ${
+                  filterStatus === 'Confirmed'
+                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-emerald-500'
+                    : 'bg-white hover:bg-stone-50 border-stone-200 text-stone-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${filterStatus === 'Confirmed' ? 'text-emerald-300' : 'text-emerald-700'}`}>
+                    Confirmed
+                  </span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-none font-bold uppercase ${filterStatus === 'Confirmed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-50 text-emerald-800'}`}>
+                    Booked
+                  </span>
+                </div>
+                <p className="font-serif text-2xl font-bold text-emerald-700">{confirmedCount}</p>
+                <p className={`text-[11px] mt-0.5 ${filterStatus === 'Confirmed' ? 'text-stone-300' : 'text-stone-500'}`}>
+                  Deposited expeditions
+                </p>
+              </button>
+            </div>
+
+            {/* Filters, Priority, Curator & Sorting Control Bar */}
+            <div className="bg-white p-4 border border-stone-200 shadow-sm flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+              
+              {/* Status Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
+                {[
+                  { key: 'All', label: 'All Leads', count: enquiries.length },
+                  { key: 'New Enquiry', label: 'New', count: newLeadsCount },
+                  { key: 'Under Curation', label: 'Curation', count: underCurationCount },
+                  { key: 'Proposal Sent', label: 'Proposals', count: proposalSentCount },
+                  { key: 'Confirmed', label: 'Confirmed', count: confirmedCount },
+                  { key: 'Closed', label: 'Closed', count: closedCount }
+                ].map(tab => (
                   <button
-                    key={st}
-                    onClick={() => setFilterStatus(st)}
-                    className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer rounded-none border ${
-                      filterStatus === st ? 'bg-[#C5A880] text-white border-transparent' : 'bg-white text-stone-600 border-stone-200'
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setFilterStatus(tab.key)}
+                    className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap border flex items-center gap-1.5 ${
+                      filterStatus === tab.key
+                        ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                        : 'bg-[#FAF7F2] text-stone-600 border-stone-200 hover:bg-stone-100'
                     }`}
                   >
-                    {st}
+                    <span>{tab.label}</span>
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono ${
+                      filterStatus === tab.key ? 'bg-[#C5A880] text-[#1C2421] font-bold' : 'bg-stone-200 text-stone-700'
+                    }`}>
+                      {tab.count}
+                    </span>
                   </button>
                 ))}
               </div>
 
-              {filteredEnquiries.length > 0 ? (
-                <div className="bg-white border border-stone-200 shadow-sm divide-y divide-stone-100">
-                  {filteredEnquiries.map(enq => (
-                    <div
-                      key={enq.id}
-                      onClick={() => setSelectedEnquiry(enq)}
-                      className={`p-5 hover:bg-[#FAF7F2] transition-colors cursor-pointer flex justify-between items-center gap-4 ${
-                        selectedEnquiry?.id === enq.id ? 'bg-[#FAF7F2] border-l-4 border-[#C5A880]' : ''
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-serif font-bold text-stone-900">{enq.name}</h3>
-                          <span className={`text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
-                            enq.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' :
-                            enq.status === 'Under Curation' ? 'bg-amber-100 text-amber-800' : 'bg-orange-100 text-orange-800'
-                          }`}>{enq.status}</span>
-                        </div>
-                        <p className="text-xs text-stone-500 font-medium">{enq.destination} &bull; {enq.travelDate} &bull; {enq.travelers} guests</p>
-                        <p className="text-xs text-stone-600 italic line-clamp-1 mt-1">"{enq.message}"</p>
-                      </div>
-                      <div className="text-right text-[10px] text-stone-400 select-none">{enq.dateSubmitted}</div>
-                    </div>
-                  ))}
+              {/* Secondary Select Dropdowns (Priority, Curator, Sort) */}
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {/* Priority Selector */}
+                <div className="flex items-center gap-1 bg-[#FAF7F2] border border-stone-200 px-2 py-1">
+                  <span className="text-[10px] uppercase font-bold text-stone-400">Priority:</span>
+                  <select
+                    value={filterPriority}
+                    onChange={(e) => setFilterPriority(e.target.value)}
+                    className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer"
+                  >
+                    <option value="All">All ({enquiries.length})</option>
+                    <option value="VIP">VIP Leads ({vipCount})</option>
+                    <option value="High">High Priority</option>
+                    <option value="Standard">Standard</option>
+                    <option value="Flexible">Flexible</option>
+                  </select>
                 </div>
-              ) : (
-                <div className="bg-white p-12 text-center text-stone-400 italic border border-stone-200">No enquiries found.</div>
-              )}
+
+                {/* Curator Selector */}
+                <div className="flex items-center gap-1 bg-[#FAF7F2] border border-stone-200 px-2 py-1">
+                  <span className="text-[10px] uppercase font-bold text-stone-400">Curator:</span>
+                  <select
+                    value={filterCurator}
+                    onChange={(e) => setFilterCurator(e.target.value)}
+                    className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer"
+                  >
+                    <option value="All">All Curators</option>
+                    {staffUsers.map(st => (
+                      <option key={st.id} value={st.name}>{st.name}</option>
+                    ))}
+                    <option value="Unassigned">Unassigned</option>
+                  </select>
+                </div>
+
+                {/* Sort Order */}
+                <div className="flex items-center gap-1 bg-[#FAF7F2] border border-stone-200 px-2 py-1">
+                  <ArrowUpDown className="w-3 h-3 text-stone-400" />
+                  <select
+                    value={enquirySort}
+                    onChange={(e) => setEnquirySort(e.target.value as any)}
+                    className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer"
+                  >
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="priority">Priority (VIP First)</option>
+                  </select>
+                </div>
+
+                {/* Clear Filters Reset */}
+                {(filterStatus !== 'All' || filterPriority !== 'All' || filterCurator !== 'All' || searchQuery) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStatus('All');
+                      setFilterPriority('All');
+                      setFilterCurator('All');
+                      setSearchQuery('');
+                    }}
+                    className="text-[10px] text-stone-500 hover:text-stone-900 underline font-bold uppercase tracking-wider ml-1 cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="lg:col-span-1">
-              {selectedEnquiry ? (
-                <div className="bg-white border border-stone-200 p-6 shadow-sm sticky top-28 space-y-5 text-xs">
-                  <div className="flex justify-between items-start border-b border-stone-100 pb-3">
-                    <div>
-                      <span className="text-[9px] uppercase tracking-widest text-stone-400 font-bold">Traveller Lead</span>
-                      <h2 className="font-serif text-xl font-bold text-stone-900 mt-1">{selectedEnquiry.name}</h2>
-                    </div>
-                    <button onClick={() => setSelectedEnquiry(null)} className="text-stone-400 hover:text-stone-700"><X className="w-4 h-4" /></button>
-                  </div>
+            {/* Split Screen Master-Detail Console */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+              
+              {/* LEFT COLUMN: ENQUIRIES LIST (5 of 12 cols on desktop) */}
+              <div className="xl:col-span-5 space-y-3">
+                <div className="flex items-center justify-between text-xs text-stone-500 px-1 font-medium">
+                  <span>
+                    Showing <strong className="text-stone-900">{filteredEnquiries.length}</strong> of {enquiries.length} guest enquiries
+                  </span>
+                  {selectedEnquiry && (
+                    <span className="text-[11px] text-[#C5A880] font-bold">
+                      Viewing #{selectedEnquiry.id}
+                    </span>
+                  )}
+                </div>
 
+                {filteredEnquiries.length > 0 ? (
                   <div className="space-y-3">
-                    <div>
-                      <p className="text-[9px] uppercase font-bold text-stone-400">Destination & Travel Date</p>
-                      <p className="font-medium text-stone-800">{selectedEnquiry.destination} &bull; {selectedEnquiry.travelDate}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase font-bold text-stone-400">Party Size & Safari Style</p>
-                      <p className="font-medium text-stone-800">{selectedEnquiry.travelers} guests &bull; {selectedEnquiry.style || 'Classic Safari'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase font-bold text-stone-400">Contact Details</p>
-                      <p className="font-mono text-stone-700">{selectedEnquiry.email}</p>
-                      {selectedEnquiry.phone && <p className="font-mono text-stone-700">{selectedEnquiry.phone}</p>}
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase font-bold text-stone-400">Traveller Message</p>
-                      <p className="bg-[#FAF7F2] p-3 text-stone-700 italic border border-stone-200 mt-1 leading-relaxed">
-                        "{selectedEnquiry.message}"
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-stone-100 space-y-2">
-                    <p className="text-[9px] uppercase font-bold text-stone-400">Update Lead Status</p>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {['New Enquiry', 'Under Curation', 'Confirmed'].map(st => (
-                        <button
-                          key={st}
-                          onClick={() => handleUpdateStatus(selectedEnquiry.id, st)}
-                          className={`px-2.5 py-1 text-[10px] font-bold uppercase transition-all ${
-                            selectedEnquiry.status === st ? 'bg-[#1C2421] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                    {filteredEnquiries.map(enq => {
+                      const isSelected = selectedEnquiry?.id === enq.id;
+                      const hasNotes = Array.isArray(enq.notes) && enq.notes.length > 0;
+                      return (
+                        <div
+                          key={enq.id}
+                          onClick={() => setSelectedEnquiry(enq)}
+                          className={`p-4 border transition-all cursor-pointer shadow-xs relative ${
+                            isSelected
+                              ? 'bg-white border-l-4 border-l-[#C5A880] border-t-stone-300 border-r-stone-300 border-b-stone-300 shadow-md ring-1 ring-[#C5A880]/30'
+                              : 'bg-white border-stone-200 hover:border-stone-400 hover:bg-[#FAF7F2]/60'
                           }`}
                         >
-                          {st}
-                        </button>
-                      ))}
+                          {/* Top Row: Name, Status & Priority */}
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-serif font-bold text-stone-900 text-sm">{enq.name}</h3>
+                                {enq.country && (
+                                  <span className="text-[10px] text-stone-400 font-mono">
+                                    &bull; {enq.country}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-stone-500 truncate">{enq.email}</p>
+                            </div>
+
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-none border ${
+                                enq.status === 'Confirmed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                                enq.status === 'Under Curation' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                enq.status === 'Proposal Sent' ? 'bg-sky-50 text-sky-800 border-sky-200' :
+                                enq.status === 'Closed' ? 'bg-stone-100 text-stone-600 border-stone-200' :
+                                'bg-orange-50 text-orange-800 border-orange-200 font-extrabold'
+                              }`}>
+                                {enq.status}
+                              </span>
+
+                              {enq.priority === 'VIP' && (
+                                <span className="text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.2 bg-[#C5A880]/15 text-[#927349] border border-[#C5A880]/40 flex items-center gap-1">
+                                  <Star className="w-2.5 h-2.5 fill-[#C5A880] text-[#C5A880]" />
+                                  VIP Guest
+                                </span>
+                              )}
+                              {enq.priority === 'High' && (
+                                <span className="text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.2 bg-rose-50 text-rose-700 border border-rose-200">
+                                  High Priority
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Middle Row: Safari Specs */}
+                          <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#FAF7F2] p-2.5 border border-stone-100 mb-2">
+                            <div className="flex items-center gap-1.5 text-stone-700 truncate">
+                              <MapPin className="w-3 h-3 text-[#C5A880] shrink-0" />
+                              <span className="truncate">{enq.destination}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-stone-700 truncate">
+                              <Calendar className="w-3 h-3 text-[#C5A880] shrink-0" />
+                              <span className="truncate">{enq.travelDate}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-stone-600 truncate">
+                              <Users className="w-3 h-3 text-stone-400 shrink-0" />
+                              <span className="truncate">{enq.travelers}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-stone-600 truncate">
+                              <DollarSign className="w-3 h-3 text-stone-400 shrink-0" />
+                              <span className="truncate font-mono">{enq.budget || 'Custom Quote'}</span>
+                            </div>
+                          </div>
+
+                          {/* Message Excerpt */}
+                          {enq.message && (
+                            <p className="text-[11px] text-stone-600 italic line-clamp-2 mb-2 leading-relaxed">
+                              "{enq.message}"
+                            </p>
+                          )}
+
+                          {/* Bottom Row: Metadata & Curator */}
+                          <div className="flex items-center justify-between text-[10px] text-stone-400 pt-2 border-t border-stone-100">
+                            <div className="flex items-center gap-2">
+                              <span>{enq.dateSubmitted}</span>
+                              {enq.source && (
+                                <span className="bg-stone-100 px-1.5 py-0.5 text-stone-500 font-mono truncate max-w-[130px]">
+                                  {enq.source}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {hasNotes && (
+                                <span className="flex items-center gap-1 text-[#C5A880] font-medium" title={`${enq.notes.length} internal notes`}>
+                                  <MessageSquare className="w-3 h-3" />
+                                  <span>{enq.notes.length}</span>
+                                </span>
+                              )}
+
+                              <div className="flex items-center gap-1 text-stone-600 font-medium">
+                                <span className="w-4 h-4 rounded-full bg-[#1C2421] text-[#C5A880] flex items-center justify-center text-[8px] font-bold">
+                                  {(enq.assignedTo || 'U').charAt(0)}
+                                </span>
+                                <span className="truncate max-w-[90px]">{enq.assignedTo || 'Unassigned'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-white p-12 text-center border border-stone-200 shadow-sm space-y-3">
+                    <MessageSquare className="w-8 h-8 text-stone-300 mx-auto" />
+                    <h4 className="font-serif text-base font-bold text-stone-700">No Enquiries Found</h4>
+                    <p className="text-xs text-stone-400 max-w-sm mx-auto">
+                      No guest enquiries match your selected filters. Try resetting the status or priority filters.
+                    </p>
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFilterStatus('All');
+                          setFilterPriority('All');
+                          setFilterCurator('All');
+                          setSearchQuery('');
+                        }}
+                        className="px-4 py-2 border border-stone-300 text-stone-700 text-xs font-bold uppercase tracking-wider hover:bg-stone-50"
+                      >
+                        Reset All Filters
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddEnquiryModal(true)}
+                        className="px-4 py-2 bg-[#C5A880] text-[#1C2421] text-xs font-bold uppercase tracking-wider hover:bg-[#1C2421] hover:text-white"
+                      >
+                        Log Inbound Lead
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* RIGHT COLUMN: LEAD DOSSIER & CONCIERGE CONSOLE (7 of 12 cols on desktop) */}
+              <div className="xl:col-span-7">
+                {selectedEnquiry ? (
+                  <div className="bg-white border border-stone-200 shadow-sm xl:sticky xl:top-24 space-y-5 text-xs overflow-hidden">
+                    
+                    {/* Dossier Header */}
+                    <div className="p-5 bg-[#FAF7F2] border-b border-stone-200">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-[#C5A880] bg-[#1C2421] px-2 py-0.5 text-white">
+                              Ref #{selectedEnquiry.id}
+                            </span>
+                            <span className="text-[10px] text-stone-500 font-mono">
+                              Received {selectedEnquiry.dateSubmitted}
+                            </span>
+                            {selectedEnquiry.source && (
+                              <span className="text-[10px] text-stone-500 font-mono bg-white px-2 py-0.5 border border-stone-200">
+                                {selectedEnquiry.source}
+                              </span>
+                            )}
+                          </div>
+                          <h2 className="font-serif text-2xl font-bold text-stone-900 mt-2">
+                            {selectedEnquiry.name}
+                          </h2>
+                        </div>
+
+                        {/* Quick Communication Actions Bar */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEmailComposer(selectedEnquiry, 'welcome')}
+                            className="px-3 py-1.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            title="Compose luxury safari response email"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>Email Guest</span>
+                          </button>
+
+                          <a
+                            href={getWhatsAppLink(selectedEnquiry)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-emerald-700 text-white hover:bg-emerald-800 font-bold text-[10px] uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            title="Chat via WhatsApp Concierge"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>WhatsApp</span>
+                          </a>
+
+                          <button
+                            type="button"
+                            onClick={() => setEditingEnquiry(selectedEnquiry)}
+                            className="p-1.5 bg-white text-stone-700 hover:text-stone-900 border border-stone-200 transition-colors"
+                            title="Edit Lead Details"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteEnquiry(selectedEnquiry.id)}
+                            className="p-1.5 bg-white text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-colors"
+                            title="Delete Enquiry"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEnquiry(null)}
+                            className="p-1.5 text-stone-400 hover:text-stone-700 ml-1"
+                            title="Close Dossier"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Interactive Visual Safari Pipeline Stepper */}
+                      <div className="mt-5 pt-4 border-t border-stone-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                            Expedition Pipeline Stage
+                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">
+                            Status: {selectedEnquiry.status}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-1 sm:gap-2">
+                          {[
+                            { key: 'New Enquiry', label: '1. Inbound Lead', color: 'orange' },
+                            { key: 'Under Curation', label: '2. Curation', color: 'amber' },
+                            { key: 'Proposal Sent', label: '3. Proposal Sent', color: 'sky' },
+                            { key: 'Confirmed', label: '4. Confirmed Safari', color: 'emerald' }
+                          ].map(stage => {
+                            const isCurrent = selectedEnquiry.status === stage.key;
+                            return (
+                              <button
+                                key={stage.key}
+                                type="button"
+                                onClick={() => handleUpdateStatus(selectedEnquiry.id, stage.key)}
+                                className={`py-2 px-1 text-center border font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer ${
+                                  isCurrent
+                                    ? 'bg-[#1C2421] text-white border-[#1C2421] ring-2 ring-[#C5A880]'
+                                    : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-200'
+                                }`}
+                              >
+                                <span className="block truncate">{stage.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => handleDeleteEnquiry(selectedEnquiry.id)}
-                      className="w-full mt-3 py-2 text-rose-600 hover:bg-rose-50 border border-rose-200 text-xs font-bold uppercase transition-colors"
-                    >
-                      Delete Enquiry
-                    </button>
+                    {/* Dossier Body Content */}
+                    <div className="p-6 space-y-6">
+                      
+                      {/* Section 1: Guest Contact & Country Details */}
+                      <div className="bg-[#FAF7F2] p-4 border border-stone-200">
+                        <h4 className="text-[10px] uppercase font-bold text-[#C5A880] tracking-wider mb-3 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Guest Communication & Credentials</span>
+                        </h4>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                          <div>
+                            <span className="block text-[10px] uppercase font-bold text-stone-400">Email Address</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="font-mono text-stone-900 select-all">{selectedEnquiry.email}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(selectedEnquiry.email);
+                                  setCopiedLeadField('email');
+                                  setTimeout(() => setCopiedLeadField(null), 1500);
+                                }}
+                                className="text-stone-400 hover:text-stone-700"
+                                title="Copy Email"
+                              >
+                                {copiedLeadField === 'email' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="font-mono text-stone-900 select-all">{selectedEnquiry.phone || 'N/A'}</span>
+                              {selectedEnquiry.phone && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(selectedEnquiry.phone);
+                                    setCopiedLeadField('phone');
+                                    setTimeout(() => setCopiedLeadField(null), 1500);
+                                  }}
+                                  className="text-stone-400 hover:text-stone-700"
+                                  title="Copy Phone"
+                                >
+                                  {copiedLeadField === 'phone' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <span className="block text-[10px] uppercase font-bold text-stone-400">Country of Residence</span>
+                            <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.country || 'International Traveler'}</p>
+                          </div>
+
+                          <div>
+                            <span className="block text-[10px] uppercase font-bold text-stone-400">Inbound Channel</span>
+                            <p className="font-medium text-stone-800 mt-0.5">{selectedEnquiry.source || 'Website Plan Form'}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section 2: Safari Expedition Specifications */}
+                      <div>
+                        <h4 className="text-[10px] uppercase font-bold text-stone-400 tracking-wider mb-3 flex items-center gap-1.5">
+                          <Compass className="w-3.5 h-3.5 text-[#C5A880]" />
+                          <span>Expedition Specifications</span>
+                        </h4>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Destination</span>
+                            <p className="font-serif font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.destination}</p>
+                          </div>
+
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Travel Window</span>
+                            <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelDate}</p>
+                          </div>
+
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Party Size</span>
+                            <p className="font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.travelers}</p>
+                          </div>
+
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Safari Style</span>
+                            <p className="font-medium text-stone-800 text-xs mt-0.5">{selectedEnquiry.style || 'Classic Luxury Safari'}</p>
+                          </div>
+
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Budget Estimate</span>
+                            <p className="font-mono font-bold text-stone-900 text-sm mt-0.5">{selectedEnquiry.budget || 'Custom Quote'}</p>
+                          </div>
+
+                          <div className="bg-white border border-stone-200 p-3">
+                            <span className="block text-[9px] uppercase font-bold text-stone-400">Assigned Curator</span>
+                            <div className="mt-1">
+                              <select
+                                value={selectedEnquiry.assignedTo || 'Timothy Kungu'}
+                                onChange={(e) => handleAssignCurator(selectedEnquiry.id, e.target.value)}
+                                className="w-full bg-[#FAF7F2] border border-stone-200 p-1 text-[11px] font-bold text-stone-800 cursor-pointer"
+                              >
+                                {staffUsers.map(st => (
+                                  <option key={st.id} value={st.name}>{st.name}</option>
+                                ))}
+                                <option value="Unassigned">Unassigned</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section 3: Traveler's Message & Vision */}
+                      <div>
+                        <span className="block text-[10px] uppercase font-bold text-stone-400 mb-1.5">
+                          Guest Expedition Vision & Custom Requests
+                        </span>
+                        <div className="bg-[#FAF7F2] border-l-4 border-l-[#C5A880] p-4 text-stone-800 italic border-t border-r border-b border-stone-200 text-xs leading-relaxed shadow-xs">
+                          "{selectedEnquiry.message || 'No specific requests provided. Standard luxury curation requested.'}"
+                        </div>
+                      </div>
+
+                      {/* Section 4: Operational Status & Priority Controls */}
+                      <div className="p-4 bg-stone-50 border border-stone-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] uppercase font-bold text-stone-600 tracking-wider">
+                            Lead Management Controls
+                          </h4>
+                          <span className="text-[10px] text-stone-400 font-mono">
+                            Auto-syncs to cloud database
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
+                              Change Lead Status
+                            </label>
+                            <select
+                              value={selectedEnquiry.status}
+                              onChange={(e) => handleUpdateStatus(selectedEnquiry.id, e.target.value)}
+                              className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900"
+                            >
+                              <option value="New Enquiry">New Enquiry (Pending Initial Call)</option>
+                              <option value="Under Curation">Under Curation (Designing Itinerary)</option>
+                              <option value="Proposal Sent">Proposal Sent (Quote Out)</option>
+                              <option value="Confirmed">Confirmed (Booking Deposit Received)</option>
+                              <option value="Closed">Closed / Inactive</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
+                              Lead Priority Flag
+                            </label>
+                            <select
+                              value={selectedEnquiry.priority || 'Standard'}
+                              onChange={(e) => handleUpdatePriority(selectedEnquiry.id, e.target.value)}
+                              className="w-full bg-white border border-stone-200 p-2 text-xs font-bold text-stone-900"
+                            >
+                              <option value="VIP">⭐ VIP (High Net Worth / Custom Jet)</option>
+                              <option value="High">🔴 High Priority (Time-sensitive permits)</option>
+                              <option value="Standard">Standard Lead</option>
+                              <option value="Flexible">Flexible Schedule</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section 5: Internal Curator Notes & Activity Log */}
+                      <div className="space-y-3 pt-2">
+                        <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                          <h4 className="text-[10px] uppercase font-bold text-stone-700 tracking-wider flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-[#C5A880]" />
+                            <span>Curator Internal Notes & Expedition Log</span>
+                          </h4>
+                          <span className="text-[10px] font-mono text-stone-400">
+                            {Array.isArray(selectedEnquiry.notes) ? selectedEnquiry.notes.length : 0} notes
+                          </span>
+                        </div>
+
+                        {/* Chronological Notes Thread */}
+                        {Array.isArray(selectedEnquiry.notes) && selectedEnquiry.notes.length > 0 ? (
+                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            {selectedEnquiry.notes.map((note: EnquiryNote, idx: number) => (
+                              <div key={note.id || idx} className="p-3 bg-[#FAF7F2] border border-stone-200 text-xs">
+                                <div className="flex items-center justify-between mb-1 text-[10px]">
+                                  <span className="font-bold text-stone-900 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#C5A880]"></span>
+                                    {note.author}
+                                  </span>
+                                  <span className="text-stone-400 font-mono">{note.date}</span>
+                                </div>
+                                <p className="text-stone-700 leading-relaxed">{note.text}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-stone-400 italic text-xs py-2">
+                            No internal notes recorded yet. Add communication logs, room holds, or custom flight notes below.
+                          </p>
+                        )}
+
+                        {/* Add Note Form */}
+                        <div className="space-y-2 pt-2">
+                          {/* Quick note prompt pills */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] uppercase font-bold text-stone-400 mr-1">Quick Tags:</span>
+                            {[
+                              'Called guest on phone',
+                              'Held provisional camp suites',
+                              'Sent flight charter quote',
+                              'Awaiting passport copies',
+                              'Deposit invoice issued'
+                            ].map(tag => (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => setNewNoteText(prev => prev ? `${prev} - ${tag}` : tag)}
+                                className="text-[9px] px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-mono transition-colors"
+                              >
+                                + {tag}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <textarea
+                              rows={2}
+                              value={newNoteText}
+                              onChange={(e) => setNewNoteText(e.target.value)}
+                              placeholder="Record client communication, dietary preferences, or room holds..."
+                              className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-xs text-stone-900 focus:outline-none focus:border-[#C5A880]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddEnquiryNote(selectedEnquiry.id, newNoteText)}
+                              disabled={!newNoteText.trim()}
+                              className="px-4 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] font-bold text-[10px] uppercase tracking-wider transition-colors disabled:opacity-40 shrink-0 flex items-center justify-center cursor-pointer"
+                            >
+                              Log Note
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
+
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="bg-white border border-stone-200 p-8 text-center text-stone-400 italic">
-                  Select an enquiry from the log to view details, update status, and manage client communications.
-                </div>
-              )}
+                ) : (
+                  <div className="bg-white border border-stone-200 p-12 text-center text-stone-400 shadow-sm space-y-4 xl:sticky xl:top-24">
+                    <div className="w-14 h-14 mx-auto rounded-full bg-[#FAF7F2] border border-stone-200 flex items-center justify-center text-[#C5A880]">
+                      <Compass className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-lg font-bold text-stone-800">
+                        Guest Lead Concierge Console
+                      </h3>
+                      <p className="text-xs text-stone-500 max-w-sm mx-auto mt-1 leading-relaxed">
+                        Select an inbound enquiry from the left to view comprehensive trip details, track expedition pipeline progress, dispatch personalized proposals, and log curator notes.
+                      </p>
+                    </div>
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddEnquiryModal(true)}
+                        className="px-5 py-2.5 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-sm"
+                      >
+                        + Log New Inbound Lead
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
             </div>
+
           </div>
         )}
 
@@ -2952,6 +4025,525 @@ export default function AdminDashboardView({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL: LOG NEW INBOUND LEAD */}
+      {/* ====================================================================== */}
+      {showAddEnquiryModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 text-xs my-8">
+            <div className="flex justify-between items-center border-b border-stone-100 pb-3 mb-4">
+              <div>
+                <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold">Concierge Inbound</span>
+                <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">Log New Guest Lead</h3>
+              </div>
+              <button type="button" onClick={() => setShowAddEnquiryModal(false)} className="text-stone-400 hover:text-stone-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateEnquiry} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Guest Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Lord Charles Sterling"
+                    value={newEnquiryForm.name}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, name: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. charles@sterling.co.uk"
+                    value={newEnquiryForm.email}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, email: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Phone Number / WhatsApp</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. +44 7911 123456"
+                    value={newEnquiryForm.phone}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, phone: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Country of Origin</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. United Kingdom, USA, Germany"
+                    value={newEnquiryForm.country}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, country: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Destination *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Kenya (Maasai Mara & Amboseli)"
+                    value={newEnquiryForm.destination}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, destination: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Approximate Travel Date</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. July - August 2027"
+                    value={newEnquiryForm.travelDate}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, travelDate: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Party Size</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 2 guests, Family of 4"
+                    value={newEnquiryForm.travelers}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, travelers: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Safari Style</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Luxury Private Tented Camp"
+                    value={newEnquiryForm.style}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, style: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Budget Target</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. $20,000 - $30,000"
+                    value={newEnquiryForm.budget}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, budget: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Priority</label>
+                  <select
+                    value={newEnquiryForm.priority}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, priority: e.target.value as any })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  >
+                    <option value="VIP">⭐ VIP Guest</option>
+                    <option value="High">🔴 High Priority</option>
+                    <option value="Standard">Standard</option>
+                    <option value="Flexible">Flexible</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Assign Curator</label>
+                  <select
+                    value={newEnquiryForm.assignedTo}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, assignedTo: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  >
+                    {staffUsers.map(st => (
+                      <option key={st.id} value={st.name}>{st.name}</option>
+                    ))}
+                    <option value="Unassigned">Unassigned</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Inbound Channel</label>
+                  <select
+                    value={newEnquiryForm.source}
+                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, source: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  >
+                    <option value="Telephone Inbound">Telephone Inbound</option>
+                    <option value="WhatsApp Concierge">WhatsApp Concierge</option>
+                    <option value="Direct Email">Direct Email</option>
+                    <option value="Walk-in / Bureau">Walk-in / Bureau</option>
+                    <option value="Luxury Partner Referral">Luxury Partner Referral</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Traveler Vision & Notes</label>
+                <textarea
+                  rows={3}
+                  placeholder="Record guest expectations, wildlife priorities (e.g. leopard tracking, migration crossings, hot air balloon)..."
+                  value={newEnquiryForm.message}
+                  onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, message: e.target.value })}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddEnquiryModal(false)}
+                  className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase text-[10px] transition-colors shadow-sm"
+                >
+                  Save Inbound Lead
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL: EDIT LEAD DETAILS */}
+      {/* ====================================================================== */}
+      {editingEnquiry && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 text-xs my-8">
+            <div className="flex justify-between items-center border-b border-stone-100 pb-3 mb-4">
+              <div>
+                <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold font-mono">#{editingEnquiry.id}</span>
+                <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">Edit Guest Lead Details</h3>
+              </div>
+              <button type="button" onClick={() => setEditingEnquiry(null)} className="text-stone-400 hover:text-stone-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedEnquiry} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Guest Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingEnquiry.name || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, name: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={editingEnquiry.email || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, email: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Phone / WhatsApp</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.phone || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, phone: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Country</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.country || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, country: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Destination *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingEnquiry.destination || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, destination: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Travel Date</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.travelDate || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, travelDate: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Party Size</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.travelers || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, travelers: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Safari Style</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.style || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, style: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Budget Target</label>
+                  <input
+                    type="text"
+                    value={editingEnquiry.budget || ''}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, budget: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Status</label>
+                  <select
+                    value={editingEnquiry.status || 'New Enquiry'}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, status: e.target.value as any })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs font-bold"
+                  >
+                    <option value="New Enquiry">New Enquiry</option>
+                    <option value="Under Curation">Under Curation</option>
+                    <option value="Proposal Sent">Proposal Sent</option>
+                    <option value="Confirmed">Confirmed</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Priority</label>
+                  <select
+                    value={editingEnquiry.priority || 'Standard'}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, priority: e.target.value as any })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  >
+                    <option value="VIP">VIP</option>
+                    <option value="High">High Priority</option>
+                    <option value="Standard">Standard</option>
+                    <option value="Flexible">Flexible</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Assigned Curator</label>
+                  <select
+                    value={editingEnquiry.assignedTo || 'Timothy Kungu'}
+                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, assignedTo: e.target.value })}
+                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs"
+                  >
+                    {staffUsers.map(st => (
+                      <option key={st.id} value={st.name}>{st.name}</option>
+                    ))}
+                    <option value="Unassigned">Unassigned</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Message</label>
+                <textarea
+                  rows={3}
+                  value={editingEnquiry.message || ''}
+                  onChange={(e) => setEditingEnquiry({ ...editingEnquiry, message: e.target.value })}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingEnquiry(null)}
+                  className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase text-[10px] transition-colors"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL: LUXURY CLIENT EMAIL COMPOSER WITH PRE-WRITTEN TEMPLATES */}
+      {/* ====================================================================== */}
+      {showEmailModal && selectedEnquiry && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-stone-200 text-xs my-8">
+            <div className="flex justify-between items-center border-b border-stone-100 pb-3 mb-4">
+              <div>
+                <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Curator Client Communication Desk</span>
+                </span>
+                <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">
+                  Compose Email to {selectedEnquiry.name}
+                </h3>
+              </div>
+              <button type="button" onClick={() => setShowEmailModal(false)} className="text-stone-400 hover:text-stone-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Template Selector Pills */}
+            <div className="mb-4">
+              <label className="block text-[10px] font-bold uppercase text-stone-400 mb-1.5">
+                Select Pre-Crafted Safari Template:
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { key: 'welcome', label: '1. Warm Welcome' },
+                  { key: 'proposal', label: '2. Custom Proposal' },
+                  { key: 'followup', label: '3. Itinerary Follow-Up' },
+                  { key: 'confirmation', label: '4. Booking Confirmation' }
+                ].map(tmpl => (
+                  <button
+                    key={tmpl.key}
+                    type="button"
+                    onClick={() => {
+                      setEmailTemplateKey(tmpl.key as any);
+                      const { subject, body } = generateEmailContent(tmpl.key as any, selectedEnquiry);
+                      setEmailSubject(subject);
+                      setEmailBody(body);
+                    }}
+                    className={`p-2 text-center border font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer ${
+                      emailTemplateKey === tmpl.key
+                        ? 'bg-[#1C2421] text-white border-[#1C2421]'
+                        : 'bg-[#FAF7F2] text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    {tmpl.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">To</label>
+                <input
+                  type="text"
+                  readOnly
+                  value={`${selectedEnquiry.name} <${selectedEnquiry.email}>`}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-stone-700 font-mono text-[11px]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Subject Line</label>
+                <input
+                  type="text"
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 p-2 text-stone-900 font-medium text-xs focus:outline-none focus:border-[#C5A880]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Message Body</label>
+                <textarea
+                  rows={9}
+                  value={emailBody}
+                  onChange={(e) => setEmailBody(e.target.value)}
+                  className="w-full bg-[#FAF7F2] border border-stone-200 p-3 text-stone-900 font-serif leading-relaxed text-xs focus:outline-none focus:border-[#C5A880]"
+                />
+              </div>
+
+              {emailSentSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Email logged into guest dossier activity record successfully!</span>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
+                    setEmailSentSuccess(true);
+                    setTimeout(() => setEmailSentSuccess(false), 3000);
+                  }}
+                  className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Formatted Text</span>
+                </button>
+
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailModal(false)}
+                    className="px-4 py-2 border border-stone-300 font-bold uppercase text-[10px] hover:bg-stone-50"
+                  >
+                    Close
+                  </button>
+
+                  <a
+                    href={`mailto:${selectedEnquiry.email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                    onClick={() => {
+                      handleAddEnquiryNote(
+                        selectedEnquiry.id,
+                        `[Email Dispatched via Mail Client] Subject: "${emailSubject}"`
+                      );
+                      setEmailSentSuccess(true);
+                      setTimeout(() => setShowEmailModal(false), 1200);
+                    }}
+                    className="px-5 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold uppercase text-[10px] transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Open in Email App & Log Note</span>
+                  </a>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -51,7 +51,8 @@ import {
   Tour, 
   Article,
   Testimonial,
-  GalleryItem
+  GalleryItem,
+  DEFAULT_ENQUIRIES
 } from './data/travelData';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -81,7 +82,16 @@ export default function App() {
 
   // General Form States
   const [planSuccessData, setPlanSuccessData] = useState<any | null>(null);
-  const [enquiries, setEnquiries] = useState<any[]>([]);
+  const [enquiries, setEnquiries] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem('kagz_enquiries');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_ENQUIRIES;
+  });
   
   // Dynamic CMS States
   const [destinations, setDestinations] = useState<Destination[]>(destinationsData);
@@ -264,12 +274,27 @@ export default function App() {
         snapshot.forEach((doc) => {
           list.push(doc.data());
         });
-        list.sort((a, b) => b.id.localeCompare(a.id));
-        setEnquiries(list);
+        list.sort((a, b) => (b.dateSubmitted || b.id || '').localeCompare(a.dateSubmitted || a.id || ''));
+        if (list.length > 0) {
+          setEnquiries(list);
+          localStorage.setItem('kagz_enquiries', JSON.stringify(list));
+        } else {
+          const stored = localStorage.getItem('kagz_enquiries');
+          if (stored) {
+            setEnquiries(JSON.parse(stored));
+          } else {
+            setEnquiries(DEFAULT_ENQUIRIES);
+            localStorage.setItem('kagz_enquiries', JSON.stringify(DEFAULT_ENQUIRIES));
+          }
+        }
       }, (error) => {
         console.warn("Firestore access error for enquiries, using local storage fallback:", error);
         const stored = localStorage.getItem('kagz_enquiries');
-        if (stored) setEnquiries(JSON.parse(stored));
+        if (stored) {
+          setEnquiries(JSON.parse(stored));
+        } else {
+          setEnquiries(DEFAULT_ENQUIRIES);
+        }
         try {
           handleFirestoreError(error, OperationType.LIST, 'enquiries');
         } catch (e) {}
@@ -279,7 +304,7 @@ export default function App() {
       if (stored) {
         setEnquiries(JSON.parse(stored));
       } else {
-        setEnquiries([]);
+        setEnquiries(DEFAULT_ENQUIRIES);
       }
     }
 
@@ -308,7 +333,12 @@ export default function App() {
       style: enquiryData.style || 'Classic Luxury Safari',
       message: enquiryData.message || '',
       status: 'New Enquiry',
-      dateSubmitted: new Date().toISOString().split('T')[0]
+      priority: enquiryData.priority || 'Standard',
+      assignedTo: enquiryData.assignedTo || 'Unassigned',
+      budget: enquiryData.budget || 'Custom Quote',
+      source: enquiryData.source || 'Website Form',
+      dateSubmitted: new Date().toISOString().split('T')[0],
+      notes: []
     };
     
     try {

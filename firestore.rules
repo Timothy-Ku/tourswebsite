@@ -101,7 +101,12 @@ service cloud.firestore {
              (!('style' in data) || (data.style is string && data.style.size() <= 100)) &&
              (!('message' in data) || (data.message is string && data.message.size() <= 2000)) &&
              (!('status' in data) || (data.status is string && data.status.size() <= 50)) &&
-             (!('dateSubmitted' in data) || (data.dateSubmitted is string && data.dateSubmitted.size() <= 30));
+             (!('dateSubmitted' in data) || (data.dateSubmitted is string && data.dateSubmitted.size() <= 30)) &&
+             (!('priority' in data) || (data.priority is string && data.priority.size() <= 50)) &&
+             (!('assignedTo' in data) || (data.assignedTo is string && data.assignedTo.size() <= 150)) &&
+             (!('budget' in data) || (data.budget is string && data.budget.size() <= 100)) &&
+             (!('source' in data) || (data.source is string && data.source.size() <= 100)) &&
+             (!('notes' in data) || (data.notes is list && data.notes.size() <= 100));
     }
 
     // 4. Collection Rules
