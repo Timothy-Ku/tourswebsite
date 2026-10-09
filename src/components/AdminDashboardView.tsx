@@ -458,9 +458,11 @@ export default function AdminDashboardView({
   const [emailSendProgress, setEmailSendProgress] = useState('');
   const [emailSendResult, setEmailSendResult] = useState<{
     success: boolean;
-    messageId: string;
+    messageId?: string;
     recipient: string;
-    deliveryTime: string;
+    deliveryTime?: string;
+    error?: string;
+    mailtoUrl?: string;
   } | null>(null);
   const [emailModalView, setEmailModalView] = useState<'compose' | 'preview'>('compose');
   const [emailSenderName, setEmailSenderName] = useState('Timothy Kungu');
@@ -1509,11 +1511,17 @@ KAGZ Travel & Safaris`
         recipient: recipientEmail,
         deliveryTime: timeFormatted
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Direct email dispatch failed:", error);
       setIsSendingEmail(false);
       setEmailSendProgress('');
-      alert("Unable to deliver email directly. Please verify network connectivity or use the fallback mail link.");
+      const mailtoUrl = `mailto:${encodeURIComponent(recipientEmail)}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+      setEmailSendResult({
+        success: false,
+        error: error?.message || "Unable to deliver email directly. Please verify network connectivity or use the fallback mail link.",
+        recipient: recipientEmail,
+        mailtoUrl,
+      });
     }
   };
 
@@ -5770,49 +5778,118 @@ KAGZ Travel & Safaris`
               </div>
             )}
 
-            {/* Delivery Confirmation Result Card */}
+            {/* Delivery Confirmation Result Card / Fallback Card */}
             {emailSendResult && (
-              <div className="p-4 mb-4 bg-emerald-50 border border-emerald-300 text-emerald-900 space-y-2">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <div>
-                      <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">
-                        Email Successfully Delivered Directly to Client's Inbox!
-                      </h4>
-                      <p className="text-[11px] text-emerald-700 mt-0.5">
-                        Transmitted directly to <strong className="font-mono">{emailSendResult.recipient}</strong> at {emailSendResult.deliveryTime}.
-                      </p>
+              emailSendResult.success ? (
+                <div className="p-4 mb-4 bg-emerald-50 border border-emerald-300 text-emerald-900 space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">
+                          Email Successfully Delivered Directly to Client's Inbox!
+                        </h4>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">
+                          Transmitted directly to <strong className="font-mono">{emailSendResult.recipient}</strong> at {emailSendResult.deliveryTime}.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 font-bold uppercase shrink-0">
+                      Status: 250 OK
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-white/80 border border-emerald-200 text-[10px] font-mono space-y-0.5 text-stone-700">
+                    <div><strong>Message-ID:</strong> &lt;{emailSendResult.messageId}&gt;</div>
+                    <div><strong>Delivery Receipt:</strong> 250 2.0.0 OK Message accepted for immediate delivery to recipient inbox</div>
+                    <div><strong>Dossier Log:</strong> Recorded in guest activity timeline &amp; cloud database</div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setEmailSendResult(null)}
+                      className="px-3 py-1 bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-800 cursor-pointer"
+                    >
+                      Compose Another Email
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmailModal(false)}
+                      className="px-3 py-1 bg-white border border-emerald-300 text-emerald-800 font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-100 cursor-pointer"
+                    >
+                      Done &amp; Close
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 mb-4 bg-amber-50 border border-amber-300 text-amber-950 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-5 h-5 text-amber-700 shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-xs uppercase tracking-wider text-amber-950">
+                          Direct Dispatch Interrupted — Fallback Link Ready
+                        </h4>
+                        <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                          {emailSendResult.error}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-2 py-0.5 font-bold uppercase shrink-0">
+                      Fallback Active
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-white/90 border border-amber-200 text-xs space-y-2">
+                    <p className="text-[11px] text-stone-700 font-medium">
+                      You can instantly dispatch this email from your desktop application (Gmail / Outlook / Apple Mail) or copy the formatted message:
+                    </p>
+
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <a
+                        href={emailSendResult.mailtoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-[#C5A880] hover:bg-[#1C2421] text-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-colors inline-flex items-center gap-1.5 shadow-xs"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Open in Email App (`mailto:`)</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`To: ${emailSendResult.recipient}\nSubject: ${emailSubject}\n\n${emailBody}`);
+                          setCopiedLeadField('emailFullText');
+                          setTimeout(() => setCopiedLeadField(null), 2500);
+                        }}
+                        className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 font-bold text-xs uppercase tracking-wider transition-colors inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{copiedLeadField === 'emailFullText' ? 'Copied Full Message!' : 'Copy Message Text'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSendDirectEmail(false)}
+                        className="px-3 py-2 bg-[#1C2421] hover:bg-stone-800 text-white font-bold text-xs uppercase tracking-wider transition-colors inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Retry Direct Send</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setEmailSendResult(null)}
+                        className="px-3 py-2 text-stone-500 hover:text-stone-800 font-bold text-xs uppercase tracking-wider cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   </div>
-                  <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 font-bold uppercase">
-                    Status: 250 OK
-                  </span>
                 </div>
-
-                <div className="p-2.5 bg-white/80 border border-emerald-200 text-[10px] font-mono space-y-0.5 text-stone-700">
-                  <div><strong>Message-ID:</strong> &lt;{emailSendResult.messageId}&gt;</div>
-                  <div><strong>Delivery Receipt:</strong> 250 2.0.0 OK Message accepted for immediate delivery to recipient inbox</div>
-                  <div><strong>Dossier Log:</strong> Recorded in guest activity timeline &amp; cloud database</div>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setEmailSendResult(null)}
-                    className="px-3 py-1 bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-800"
-                  >
-                    Compose Another Email
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowEmailModal(false)}
-                    className="px-3 py-1 bg-white border border-emerald-300 text-emerald-800 font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-100"
-                  >
-                    Done &amp; Close
-                  </button>
-                </div>
-              </div>
+              )
             )}
 
             {/* TAB 1: COMPOSE & EDIT VIEW */}
