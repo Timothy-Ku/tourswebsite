@@ -20,13 +20,25 @@ function getTransporter(customConfig?: {
   user?: string;
   pass?: string;
 }) {
-  const host = customConfig?.host || process.env.SMTP_HOST;
-  const port = Number(customConfig?.port || process.env.SMTP_PORT || 587);
+  const host = (customConfig?.host && customConfig.host.trim() !== '') 
+    ? customConfig.host 
+    : (process.env.SMTP_HOST || 'smtp.gmail.com');
+  
+  // Default to port 465 SSL for Gmail
+  const defaultPort = (host.includes('gmail.com') || process.env.SMTP_PORT === '465') ? 465 : (process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587);
+  const port = Number(customConfig?.port || defaultPort);
+  
   const secure = customConfig?.secure !== undefined
     ? customConfig.secure
     : (process.env.SMTP_SECURE === 'true' || port === 465);
-  const user = customConfig?.user || process.env.SMTP_USER;
-  const pass = customConfig?.pass || process.env.SMTP_PASS;
+
+  const user = (customConfig?.user && customConfig.user.trim() !== '') 
+    ? customConfig.user 
+    : process.env.SMTP_USER;
+
+  const pass = (customConfig?.pass && customConfig.pass.trim() !== '') 
+    ? customConfig.pass 
+    : process.env.SMTP_PASS;
 
   if (host && user && pass) {
     return {

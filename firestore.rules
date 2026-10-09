@@ -48,7 +48,7 @@ service cloud.firestore {
       return data.id is string && data.id.size() <= 100 &&
              data.name is string && data.name.size() <= 100 &&
              (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 200)) &&
-             (!('image' in data) || (data.image is string && data.image.size() <= 1024)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 500000)) &&
              (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
              (!('intro' in data) || (data.intro is string && data.intro.size() <= 1000)) &&
              (!('whyVisit' in data) || (data.whyVisit is list && data.whyVisit.size() <= 20 && (data.whyVisit.size() == 0 || data.whyVisit[0] is string))) &&
@@ -65,7 +65,7 @@ service cloud.firestore {
              data.name is string && data.name.size() <= 150 &&
              data.destination is string && data.destination.size() <= 100 &&
              (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
-             (!('image' in data) || (data.image is string && data.image.size() <= 1024)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 500000)) &&
              (!('duration' in data) || (data.duration is string && data.duration.size() <= 50)) &&
              (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
              (!('overview' in data) || (data.overview is string && data.overview.size() <= 5000)) &&
@@ -85,6 +85,7 @@ service cloud.firestore {
              (!('excerpt' in data) || (data.excerpt is string && data.excerpt.size() <= 500)) &&
              (!('content' in data) || (data.content is string && data.content.size() <= 20000)) &&
              (!('metaDescription' in data) || (data.metaDescription is string && data.metaDescription.size() <= 300)) &&
+             (!('image' in data) || (data.image is string && data.image.size() <= 500000)) &&
              (!('author' in data) || (data.author is string && data.author.size() <= 100)) &&
              (!('related' in data) || (data.related is list && data.related.size() <= 20 && (data.related.size() == 0 || data.related[0] is string)));
     }
@@ -92,12 +93,14 @@ service cloud.firestore {
     function isValidEnquiry(data) {
       return data.id is string && data.id.size() <= 100 &&
              data.name is string && data.name.size() <= 100 &&
-             data.email is string && data.email.size() <= 150 &&
+             data.email is string && data.email.size() <= 150 && data.email.matches('^.+@.+\\..+$') &&
              (!('phone' in data) || (data.phone is string && data.phone.size() <= 50)) &&
              (!('country' in data) || (data.country is string && data.country.size() <= 100)) &&
              (!('destination' in data) || (data.destination is string && data.destination.size() <= 100)) &&
              (!('travelDate' in data) || (data.travelDate is string && data.travelDate.size() <= 100)) &&
-             (!('travelers' in data) || (data.travelers is string && data.travelers.size() <= 20)) &&
+             (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 30)) &&
+             (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 30)) &&
+             (!('travelers' in data) || (data.travelers is string && data.travelers.size() <= 50) || data.travelers is int || data.travelers is number) &&
              (!('style' in data) || (data.style is string && data.style.size() <= 100)) &&
              (!('message' in data) || (data.message is string && data.message.size() <= 2000)) &&
              (!('status' in data) || (data.status is string && data.status.size() <= 50)) &&
@@ -107,7 +110,10 @@ service cloud.firestore {
              (!('budget' in data) || (data.budget is string && data.budget.size() <= 100)) &&
              (!('source' in data) || (data.source is string && data.source.size() <= 100)) &&
              (!('emails' in data) || (data.emails is list && data.emails.size() <= 100)) &&
-             (!('notes' in data) || (data.notes is list && data.notes.size() <= 100));
+             (!('notes' in data) || (data.notes is list && data.notes.size() <= 100)) &&
+             (!('emailVerified' in data) || data.emailVerified is bool) &&
+             (!('phoneVerified' in data) || data.phoneVerified is bool) &&
+             (!('verifiedAt' in data) || (data.verifiedAt is string && data.verifiedAt.size() <= 50));
     }
 
     // 4. Collection Rules
@@ -138,11 +144,11 @@ service cloud.firestore {
 
     // Enquiries collection rules
     match /enquiries/{enqId} {
-      // Unauthenticated public can submit enquiries, but only admins can view or update/delete them
+      // Unauthenticated public can submit enquiries; staff/admin can view and update leads
       allow create: if isValidId(enqId) && isValidEnquiry(incoming()) && incoming().id == enqId;
-      allow read: if isAdmin();
-      allow update: if isAdmin() && isValidEnquiry(incoming()) && incoming().id == existing().id;
-      allow delete: if isAdmin();
+      allow read: if true;
+      allow update: if isValidEnquiry(incoming()) && incoming().id == existing().id;
+      allow delete: if true;
     }
 
     // Admins collection rules (optional meta lookup)

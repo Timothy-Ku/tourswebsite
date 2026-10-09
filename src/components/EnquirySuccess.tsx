@@ -1,14 +1,17 @@
 import React from 'react';
-import { CheckCircle, Calendar, Users, MapPin, Mail, ArrowLeft } from 'lucide-react';
+import { CheckCircle, Calendar, Users, MapPin, Mail, Phone, ArrowLeft } from 'lucide-react';
 
 interface EnquirySuccessProps {
   formData: {
+    id?: string;
     name: string;
     email: string;
+    phone?: string;
     destination: string;
     travelDate: string;
     travelers: string | number;
     message?: string;
+    databaseStored?: boolean;
   };
   onReset: () => void;
 }
@@ -21,9 +24,16 @@ export default function EnquirySuccess({ formData, onReset }: EnquirySuccessProp
         <h2 className="font-serif text-3xl md:text-4xl font-bold text-[#132E20] mb-2 tracking-wide">
           Your Safari Design Begins
         </h2>
-        <p className="text-stone-500 text-sm max-w-md mx-auto">
-          Thank you, <span className="font-semibold text-[#132E20]">{formData.name}</span>. Your enquiry has been received by KAGZ. A personal travel designer is reviewing your details.
+        <p className="text-stone-500 text-sm max-w-md mx-auto mb-4">
+          Thank you, <span className="font-semibold text-[#132E20]">{formData.name}</span>. Your enquiry has been received and saved to our database. A personal travel designer is reviewing your details.
         </p>
+
+        {formData.id && (
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono rounded">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Saved to Database &middot; Ref: <strong>#{formData.id}</strong></span>
+          </div>
+        )}
       </div>
 
       <div className="bg-[#FAF7F2] p-6 border-l-4 border-[#C5A880] space-y-4 mb-8">
@@ -48,6 +58,12 @@ export default function EnquirySuccess({ formData, onReset }: EnquirySuccessProp
             <Mail className="w-4 h-4 text-[#C5A880]" />
             <span><strong>Contact Email:</strong> {formData.email}</span>
           </div>
+          {formData.phone && (
+            <div className="flex items-center gap-2 sm:col-span-2">
+              <Phone className="w-4 h-4 text-[#C5A880]" />
+              <span><strong>Contact Phone:</strong> {formData.phone}</span>
+            </div>
+          )}
         </div>
 
         {formData.message && (

@@ -56,6 +56,7 @@
         "content": { "type": "string", "maxLength": 20000 },
         "metaDescription": { "type": "string", "maxLength": 300 },
         "author": { "type": "string", "maxLength": 100 },
+        "image": { "type": "string" },
         "related": { "type": "array" }
       },
       "required": ["id", "title"]
@@ -72,13 +73,18 @@
         "country": { "type": "string", "maxLength": 100 },
         "destination": { "type": "string", "maxLength": 100 },
         "travelDate": { "type": "string", "maxLength": 100 },
+        "startDate": { "type": "string", "maxLength": 30 },
+        "endDate": { "type": "string", "maxLength": 30 },
         "travelers": { "type": "string", "maxLength": 20 },
         "style": { "type": "string", "maxLength": 100 },
         "message": { "type": "string", "maxLength": 2000 },
         "status": { "type": "string", "maxLength": 50 },
-        "dateSubmitted": { "type": "string", "maxLength": 30 }
+        "dateSubmitted": { "type": "string", "maxLength": 30 },
+        "emailVerified": { "type": "boolean" },
+        "phoneVerified": { "type": "boolean" },
+        "verifiedAt": { "type": "string", "maxLength": 50 }
       },
-      "required": ["id", "name", "email"]
+      "required": ["id", "name", "email", "phone"]
     },
     "Admin": {
       "title": "Admin",

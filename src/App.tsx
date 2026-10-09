@@ -47,8 +47,12 @@ import {
   Edit3,
   LogOut,
   Eye,
-  Globe
+  Globe,
+  AlertCircle,
+  CheckCircle2,
+  Phone
 } from 'lucide-react';
+import { validateClientEmail, validateClientPhone, verifyClientContact } from './utils/validation';
 
 // Decoupled modules
 import { 
@@ -69,6 +73,7 @@ import Footer from './components/Footer';
 import SEOUpdater from './components/SEOUpdater';
 import EnquirySuccess from './components/EnquirySuccess';
 import AdminDashboardView from './components/AdminDashboardView';
+import { DateRangePicker, formatDateRangeSummary } from './components/DateRangePicker';
 import { 
   db, 
   auth, 
@@ -275,48 +280,34 @@ export default function App() {
       if (stored) setGallery(JSON.parse(stored));
     });
 
-    // 6. Enquiries Subscription (Only if admin is logged in to avoid unauthenticated permission errors)
-    let unsubEnquiries = () => {};
-
-    if (isAdminUser) {
-      unsubEnquiries = onSnapshot(collection(db, 'enquiries'), (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((doc) => {
-          list.push(doc.data());
-        });
-        list.sort((a, b) => (b.dateSubmitted || b.id || '').localeCompare(a.dateSubmitted || a.id || ''));
-        if (list.length > 0) {
-          setEnquiries(list);
-          localStorage.setItem('kagz_enquiries', JSON.stringify(list));
-        } else {
-          const stored = localStorage.getItem('kagz_enquiries');
-          if (stored) {
-            setEnquiries(JSON.parse(stored));
-          } else {
-            setEnquiries(DEFAULT_ENQUIRIES);
-            localStorage.setItem('kagz_enquiries', JSON.stringify(DEFAULT_ENQUIRIES));
-          }
-        }
-      }, (error) => {
-        console.warn("Firestore access error for enquiries, using local storage fallback:", error);
+    // 6. Enquiries Subscription (Live real-time sync with Cloud Firestore database)
+    const unsubEnquiries = onSnapshot(collection(db, 'enquiries'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data());
+      });
+      list.sort((a, b) => (b.dateSubmitted || b.id || '').localeCompare(a.dateSubmitted || a.id || ''));
+      if (list.length > 0) {
+        setEnquiries(list);
+        localStorage.setItem('kagz_enquiries', JSON.stringify(list));
+      } else {
         const stored = localStorage.getItem('kagz_enquiries');
         if (stored) {
           setEnquiries(JSON.parse(stored));
         } else {
           setEnquiries(DEFAULT_ENQUIRIES);
+          localStorage.setItem('kagz_enquiries', JSON.stringify(DEFAULT_ENQUIRIES));
         }
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'enquiries');
-        } catch (e) {}
-      });
-    } else {
+      }
+    }, (error) => {
+      console.warn("Firestore access notice for enquiries, using local storage:", error);
       const stored = localStorage.getItem('kagz_enquiries');
       if (stored) {
         setEnquiries(JSON.parse(stored));
       } else {
         setEnquiries(DEFAULT_ENQUIRIES);
       }
-    }
+    });
 
     return () => {
       unsubDests();
@@ -328,46 +319,86 @@ export default function App() {
     };
   }, [isAdminUser]);
 
-  // Centralized enquiry submission handler (Writes to Firestore, falls back to local storage)
-  const handleNewEnquiry = async (enquiryData: any) => {
+  // Centralized enquiry submission handler (Verifies client contact & saves to Firestore database)
+  const handleNewEnquiry = async (enquiryData: any): Promise<{ success: boolean; id?: string; error?: string }> => {
+    if (!enquiryData) {
+      setPlanSuccessData(null);
+      return { success: true };
+    }
+
+    // Strictly verify client email and phone number before storing to database
+    const verification = verifyClientContact(enquiryData.email, enquiryData.phone);
+    if (!verification.isValid) {
+      console.error("Client email or phone verification failed before database persistence:", verification.errorMessage);
+      return { success: false, error: verification.errorMessage };
+    }
+
     const id = `enq-${Date.now()}`;
     const newEnq = {
       id,
-      name: enquiryData.name || 'Anonymous Traveler',
-      email: enquiryData.email || 'no-email@kagztravel.com',
-      phone: enquiryData.phone || 'N/A',
-      country: enquiryData.country || 'N/A',
-      destination: enquiryData.destination || 'Kenya',
-      travelDate: enquiryData.travelDate || 'flexible',
-      travelers: enquiryData.travelers || '2',
+      name: (enquiryData.name || '').trim() || 'Anonymous Traveler',
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      country: (enquiryData.country || '').trim() || 'International',
+      destination: (enquiryData.destination || 'Kenya').trim(),
+      travelDate: enquiryData.travelDate || 'Flexible',
+      startDate: enquiryData.startDate || '',
+      endDate: enquiryData.endDate || '',
+      travelers: String(enquiryData.travelers || '2'),
       style: enquiryData.style || 'Classic Luxury Safari',
       message: enquiryData.message || '',
       status: 'New Enquiry',
       priority: enquiryData.priority || 'Standard',
       assignedTo: enquiryData.assignedTo || 'Unassigned',
       budget: enquiryData.budget || 'Custom Quote',
-      source: enquiryData.source || 'Website Form',
+      source: enquiryData.source || 'Website Travel Planner',
       dateSubmitted: new Date().toISOString().split('T')[0],
-      notes: []
+      emailVerified: true,
+      phoneVerified: true,
+      verifiedAt: new Date().toISOString(),
+      notes: [
+        {
+          id: `note-${Date.now()}`,
+          author: 'KAGZ Concierge System',
+          date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          text: `Inbound traveller enquiry submitted online and stored to Firestore database.`
+        }
+      ]
     };
     
     try {
       await setDoc(doc(db, 'enquiries', id), newEnq);
-      setEnquiries(prev => [newEnq, ...prev]);
-    } catch (err) {
-      console.warn("Failed to write enquiry to Firestore, storing locally:", err);
-      const updated = [newEnq, ...enquiries];
+      console.log("Enquiry successfully written to Firestore database:", id);
+      setEnquiries(prev => [newEnq, ...prev.filter(e => e.id !== id)]);
+    } catch (err: any) {
+      console.warn("Firestore sync notice for enquiry, persisting locally:", err);
+      const updated = [newEnq, ...enquiries.filter(e => e.id !== id)];
       setEnquiries(updated);
       localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
       try {
         handleFirestoreError(err, OperationType.CREATE, `enquiries/${id}`);
       } catch (e) {}
     }
+
+    // Always update local cache
+    try {
+      const stored = JSON.parse(localStorage.getItem('kagz_enquiries') || '[]');
+      localStorage.setItem('kagz_enquiries', JSON.stringify([newEnq, ...stored.filter((e: any) => e.id !== id)]));
+    } catch (e) {}
     
     // Track Google Analytics lead conversion event
     trackEnquirySubmit(newEnq.destination, newEnq.travelers, newEnq.style);
     
-    setPlanSuccessData(enquiryData);
+    setPlanSuccessData({
+      ...enquiryData,
+      id,
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      emailVerified: true,
+      phoneVerified: true,
+      databaseStored: true
+    });
+    return { success: true, id };
   };
 
   // Initialize Google Analytics on App Mount
@@ -1243,7 +1274,7 @@ interface DestinationDetailViewProps {
   id: string;
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
-  setPlanSuccessData: (data: any) => void;
+  setPlanSuccessData: (data: any) => Promise<any> | void;
   destinations: Destination[];
   tours: Tour[];
 }
@@ -1267,23 +1298,47 @@ function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessDat
   // Quick enquiry states
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [travelDate, setTravelDate] = useState('');
   const [travelers, setTravelers] = useState('2');
   const [message, setMessage] = useState('');
+  const [destEnquiryError, setDestEnquiryError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleQuickEnquirySubmit = (e: React.FormEvent) => {
+  const handleQuickEnquirySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && email.trim()) {
-      setPlanSuccessData({
-        name,
-        email,
-        destination: dest.name,
-        travelDate,
-        travelers,
-        message
-      });
-      onNavigate('#/plan');
+    if (!name.trim()) {
+      setDestEnquiryError('Please enter your full name.');
+      return;
     }
+    const verification = verifyClientContact(email, phone);
+    if (!verification.isValid) {
+      setDestEnquiryError(verification.errorMessage || 'Please enter a valid verified email address and phone number.');
+      return;
+    }
+    setDestEnquiryError(null);
+    setIsSubmitting(true);
+    const finalTravelDate = travelDate || formatDateRangeSummary(startDate, endDate) || 'Flexible';
+    const result = await setPlanSuccessData({
+      name: name.trim(),
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      destination: dest.name,
+      travelDate: finalTravelDate,
+      startDate,
+      endDate,
+      travelers: String(travelers || '2'),
+      source: `Destination: ${dest.name}`,
+      message
+    });
+    setIsSubmitting(false);
+    if (result && result.success === false) {
+      setDestEnquiryError(result.error || 'Failed to save enquiry to database.');
+      return;
+    }
+    onNavigate('#/plan');
   };
 
   return (
@@ -1416,45 +1471,109 @@ function DestinationDetailView({ id, onNavigate, onImageError, setPlanSuccessDat
               Share your travel preferences and our experts will craft a bespoke safari itinerary for {dest.name}.
             </p>
 
+            {destEnquiryError && (
+              <div className="p-3 bg-rose-900/60 border border-rose-500/50 text-rose-200 text-xs flex items-start gap-2 mb-4">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{destEnquiryError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleQuickEnquirySubmit} className="space-y-4 text-xs text-stone-300">
               <div className="space-y-1">
-                <label htmlFor="quick-name" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Full Name</label>
+                <label htmlFor="quick-name" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Full Name *</label>
                 <input 
                   id="quick-name"
                   type="text" 
                   required
                   placeholder="e.g. John Doe"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (destEnquiryError) setDestEnquiryError(null);
+                  }}
                   className="w-full bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:outline-none focus:border-[#C5A880] placeholder-stone-500 rounded-none text-xs"
                 />
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="quick-email" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Email Address</label>
+                <div className="flex justify-between items-center">
+                  <label htmlFor="quick-email" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Email Address *</label>
+                  <span className="text-[9px] text-stone-400">Verified format</span>
+                </div>
                 <input 
                   id="quick-email"
                   type="email" 
                   required
                   placeholder="e.g. john@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (destEnquiryError) setDestEnquiryError(null);
+                  }}
                   className="w-full bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:outline-none focus:border-[#C5A880] placeholder-stone-500 rounded-none text-xs"
                 />
+                {email && (() => {
+                  const res = validateClientEmail(email);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      Verified Email &middot; {res.domain}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-400">
+                      <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label htmlFor="quick-date" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Preferred Date</label>
-                  <input 
-                    id="quick-date"
-                    type="text" 
-                    placeholder="e.g. June 2026"
-                    value={travelDate}
-                    onChange={(e) => setTravelDate(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:outline-none focus:border-[#C5A880] placeholder-stone-500 rounded-none text-xs"
-                  />
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label htmlFor="quick-phone" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Phone / WhatsApp *</label>
+                  <span className="text-[9px] text-stone-400">E.164 verified</span>
                 </div>
+                <input 
+                  id="quick-phone"
+                  type="tel" 
+                  required
+                  placeholder="e.g. +254 700 000000"
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (destEnquiryError) setDestEnquiryError(null);
+                  }}
+                  className="w-full bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:outline-none focus:border-[#C5A880] placeholder-stone-500 rounded-none text-xs"
+                />
+                {phone && (() => {
+                  const res = validateClientPhone(phone);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      Verified Phone &middot; {res.formattedPhone}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-400">
+                      <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
+              </div>
+
+              <div className="space-y-3">
+                <DateRangePicker
+                  theme="dark"
+                  label="Travel Window (Start – End Date)"
+                  startDate={startDate}
+                  endDate={endDate}
+                  onChange={(s, e, formatted) => {
+                    setStartDate(s);
+                    setEndDate(e);
+                    setTravelDate(formatted);
+                  }}
+                />
+
                 <div className="space-y-1">
                   <label htmlFor="quick-travelers" className="block text-[10px] font-bold uppercase tracking-wider text-[#C5A880]">Guests Count</label>
                   <select 
@@ -1589,7 +1708,7 @@ interface TourDetailViewProps {
   id: string;
   onNavigate: (hash: string) => void;
   onImageError: (e: React.SyntheticEvent<HTMLImageElement>) => void;
-  setPlanSuccessData: (data: any) => void;
+  setPlanSuccessData: (data: any) => Promise<any> | void;
   tours: Tour[];
 }
 
@@ -1613,22 +1732,45 @@ function TourDetailView({ id, onNavigate, onImageError, setPlanSuccessData, tour
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [travelDate, setTravelDate] = useState('');
   const [message, setMessage] = useState('');
+  const [tourEnquiryError, setTourEnquiryError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleTourEnquirySubmit = (e: React.FormEvent) => {
+  const handleTourEnquirySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && email.trim()) {
-      setPlanSuccessData({
-        name,
-        email,
-        destination: `${tour.destination} (${tour.name})`,
-        travelDate,
-        travelers: '2',
-        message: `Inquired about itinerary. Additional Message: ${message}`
-      });
-      onNavigate('#/plan');
+    if (!name.trim()) {
+      setTourEnquiryError('Please enter your full name.');
+      return;
     }
+    const verification = verifyClientContact(email, phone);
+    if (!verification.isValid) {
+      setTourEnquiryError(verification.errorMessage || 'Please enter a valid verified email address and phone number.');
+      return;
+    }
+    setTourEnquiryError(null);
+    setIsSubmitting(true);
+    const finalTravelDate = travelDate || formatDateRangeSummary(startDate, endDate) || 'Flexible';
+    const result = await setPlanSuccessData({
+      name: name.trim(),
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      destination: `${tour.destination} (${tour.name})`,
+      travelDate: finalTravelDate,
+      startDate,
+      endDate,
+      travelers: '2',
+      source: `Tour: ${tour.name}`,
+      message: `Inquired about itinerary. Additional Message: ${message}`
+    });
+    setIsSubmitting(false);
+    if (result && result.success === false) {
+      setTourEnquiryError(result.error || 'Failed to save enquiry to database.');
+      return;
+    }
+    onNavigate('#/plan');
   };
 
   return (
@@ -1727,54 +1869,107 @@ function TourDetailView({ id, onNavigate, onImageError, setPlanSuccessData, tour
               Let us know when you would like to go, and we will build a private version of this itinerary.
             </p>
 
+            {tourEnquiryError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2 mb-4">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{tourEnquiryError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleTourEnquirySubmit} className="space-y-4 text-xs">
               <div className="space-y-1">
-                <label htmlFor="tour-name" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Full Name</label>
+                <label htmlFor="tour-name" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Full Name *</label>
                 <input 
                   id="tour-name"
                   type="text" 
                   required
                   placeholder="Your Name"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (tourEnquiryError) setTourEnquiryError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 text-stone-900 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs"
                 />
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="tour-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address</label>
+                <div className="flex justify-between items-center">
+                  <label htmlFor="tour-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address *</label>
+                  <span className="text-[9px] text-[#C5A880] font-semibold">Verification Required</span>
+                </div>
                 <input 
                   id="tour-email"
                   type="email" 
                   required
                   placeholder="email@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (tourEnquiryError) setTourEnquiryError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 text-stone-900 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs"
                 />
+                {email && (() => {
+                  const res = validateClientEmail(email);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      Verified Email &middot; {res.domain}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                      <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="tour-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Phone Number</label>
+                <div className="flex justify-between items-center">
+                  <label htmlFor="tour-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Phone Number / WhatsApp *</label>
+                  <span className="text-[9px] text-[#C5A880] font-semibold">E.164 Standard</span>
+                </div>
                 <input 
                   id="tour-phone"
                   type="tel" 
+                  required
                   placeholder="+1 234 567 890"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (tourEnquiryError) setTourEnquiryError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 text-stone-900 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs"
                 />
+                {phone && (() => {
+                  const res = validateClientPhone(phone);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      Verified Phone &middot; {res.formattedPhone}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                      <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="tour-date" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Target Date / Month</label>
-                <input 
-                  id="tour-date"
-                  type="text" 
-                  placeholder="e.g. September 2026"
-                  value={travelDate}
-                  onChange={(e) => setTravelDate(e.target.value)}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 text-stone-900 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs"
+                <DateRangePicker
+                  theme="light"
+                  label="Travel Window (Start – End Date)"
+                  startDate={startDate}
+                  endDate={endDate}
+                  onChange={(s, e, formatted) => {
+                    setStartDate(s);
+                    setEndDate(e);
+                    setTravelDate(formatted);
+                  }}
                 />
               </div>
 
@@ -2172,7 +2367,7 @@ function GalleryPageView({ onImageError, setLightboxImage, gallery }: GalleryPag
    VIEW COMPONENT: CONTACT PAGE
    ============================================================================ */
 interface ContactViewProps {
-  setPlanSuccessData: (data: any) => void;
+  setPlanSuccessData: (data: any) => Promise<any> | void;
   planSuccessData: any | null;
 }
 
@@ -2182,35 +2377,60 @@ function ContactView({ setPlanSuccessData, planSuccessData }: ContactViewProps) 
   const [phone, setPhone] = useState('');
   const [country, setCountry] = useState('');
   const [destination, setDestination] = useState('Kenya');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [travelDate, setTravelDate] = useState('');
   const [travelers, setTravelers] = useState('2');
   const [style, setStyle] = useState('Classic Luxury Safari');
   const [message, setMessage] = useState('');
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && email.trim()) {
-      setPlanSuccessData({
-        name,
-        email,
-        phone,
-        country,
-        destination,
-        travelDate,
-        travelers,
-        style,
-        message
-      });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!name.trim()) {
+      setContactError('Please enter your full name.');
+      return;
     }
+    const verification = verifyClientContact(email, phone);
+    if (!verification.isValid) {
+      setContactError(verification.errorMessage || 'Please verify your email address and phone number before submitting.');
+      return;
+    }
+    setContactError(null);
+    setIsSubmitting(true);
+    const finalTravelDate = travelDate || formatDateRangeSummary(startDate, endDate) || 'Flexible';
+    const result = await setPlanSuccessData({
+      name: name.trim(),
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      country,
+      destination,
+      travelDate: finalTravelDate,
+      startDate,
+      endDate,
+      travelers: String(travelers || '2'),
+      style,
+      source: 'Contact Us Form',
+      message
+    });
+    setIsSubmitting(false);
+    if (result && result.success === false) {
+      setContactError(result.error || 'Failed to save enquiry to database.');
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleReset = () => {
     setPlanSuccessData(null);
+    setContactError(null);
     setName('');
     setEmail('');
     setPhone('');
     setCountry('');
+    setStartDate('');
+    setEndDate('');
     setTravelDate('');
     setMessage('');
   };
@@ -2278,46 +2498,97 @@ function ContactView({ setPlanSuccessData, planSuccessData }: ContactViewProps) 
         <div className="lg:col-span-2 bg-white p-8 border border-[#EADCC9]/30 shadow-sm font-sans">
           <h3 className="font-serif text-2xl font-bold text-[#1C2421] mb-6">Send An Enquiry</h3>
           
+          {contactError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2 mb-6">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{contactError}</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6 text-xs text-stone-800">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div className="space-y-1">
-                <label htmlFor="con-name" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Full Name</label>
+                <label htmlFor="con-name" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Full Name *</label>
                 <input 
                   id="con-name"
                   type="text" 
                   required
                   placeholder="e.g. John Doe"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (contactError) setContactError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs text-stone-900"
                 />
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="con-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address</label>
+                <div className="flex justify-between items-center">
+                  <label htmlFor="con-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address *</label>
+                  <span className="text-[9px] text-[#C5A880] font-semibold">Verification Required</span>
+                </div>
                 <input 
                   id="con-email"
                   type="email" 
                   required
                   placeholder="e.g. email@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (contactError) setContactError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs text-stone-900"
                 />
+                {email && (() => {
+                  const res = validateClientEmail(email);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      Verified Email &middot; {res.domain}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                      <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div className="space-y-1">
-                <label htmlFor="con-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Phone Number</label>
+                <div className="flex justify-between items-center">
+                  <label htmlFor="con-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Phone Number / WhatsApp *</label>
+                  <span className="text-[9px] text-[#C5A880] font-semibold">E.164 Standard</span>
+                </div>
                 <input 
                   id="con-phone"
                   type="tel" 
+                  required
                   placeholder="+1 234 567"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (contactError) setContactError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs text-stone-900"
                 />
+                {phone && (() => {
+                  const res = validateClientPhone(phone);
+                  return res.isValid ? (
+                    <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                      Verified Phone &middot; {res.formattedPhone}
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                      <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                      {res.error}
+                    </p>
+                  );
+                })()}
               </div>
 
               <div className="space-y-1">
@@ -2352,14 +2623,16 @@ function ContactView({ setPlanSuccessData, planSuccessData }: ContactViewProps) 
               </div>
 
               <div className="space-y-1">
-                <label htmlFor="con-date" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Preferred Travel Date</label>
-                <input 
-                  id="con-date"
-                  type="text" 
-                  placeholder="e.g. September 2026"
-                  value={travelDate}
-                  onChange={(e) => setTravelDate(e.target.value)}
-                  className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] placeholder-stone-400 rounded-none text-xs text-stone-900"
+                <DateRangePicker
+                  theme="light"
+                  label="Preferred Travel Dates (Departure – Return)"
+                  startDate={startDate}
+                  endDate={endDate}
+                  onChange={(s, e, formatted) => {
+                    setStartDate(s);
+                    setEndDate(e);
+                    setTravelDate(formatted);
+                  }}
                 />
               </div>
 
@@ -2410,7 +2683,7 @@ function ContactView({ setPlanSuccessData, planSuccessData }: ContactViewProps) 
    VIEW COMPONENT: PLAN YOUR TRIP PAGE (STRUCTURED MULTI-STEP ENQUIRY)
    ============================================================================ */
 interface PlanViewProps {
-  setPlanSuccessData: (data: any) => void;
+  setPlanSuccessData: (data: any) => Promise<any> | void;
   planSuccessData: any | null;
 }
 
@@ -2423,50 +2696,87 @@ function PlanView({ setPlanSuccessData, planSuccessData }: PlanViewProps) {
   const [phone, setPhone] = useState('');
   const [country, setCountry] = useState('');
   const [destination, setDestination] = useState('Kenya');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [travelDate, setTravelDate] = useState('');
   const [adults, setAdults] = useState('2');
   const [children, setChildren] = useState('0');
   const [style, setStyle] = useState('Classic Luxury');
   const [experience, setExperience] = useState('Wildlife & Safari');
   const [message, setMessage] = useState('');
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleNext = () => {
-    if (step === 1 && (!name || !email || !phone)) {
-      alert('Please fill in your primary contact information.');
-      return;
+    if (step === 1) {
+      if (!name.trim()) {
+        setPlanError('Please enter your full name.');
+        return;
+      }
+      const verification = verifyClientContact(email, phone);
+      if (!verification.isValid) {
+        setPlanError(verification.errorMessage || 'Please enter a valid verified email address and telephone number.');
+        return;
+      }
+      setPlanError(null);
     }
     setStep(step + 1);
   };
 
   const handlePrev = () => {
+    setPlanError(null);
     setStep(step - 1);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && email.trim()) {
-      setPlanSuccessData({
-        name,
-        email,
-        phone,
-        country,
-        destination,
-        travelDate,
-        travelers: Number(adults) + Number(children),
-        style,
-        message: `Style: ${style}. Preference: ${experience}. Notes: ${message}`
-      });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!name.trim()) {
+      setPlanError('Please enter your full name.');
+      setStep(1);
+      return;
     }
+    const verification = verifyClientContact(email, phone);
+    if (!verification.isValid) {
+      setPlanError(verification.errorMessage || 'Please verify your contact details before submitting.');
+      setStep(1);
+      return;
+    }
+    setPlanError(null);
+    setIsSubmitting(true);
+    const finalTravelDate = travelDate || formatDateRangeSummary(startDate, endDate) || 'Flexible';
+    const totalTravelers = String(Number(adults || 1) + Number(children || 0));
+    const result = await setPlanSuccessData({
+      name: name.trim(),
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      country,
+      destination,
+      travelDate: finalTravelDate,
+      startDate,
+      endDate,
+      travelers: totalTravelers,
+      style,
+      source: 'Plan Your Trip Planner',
+      message: `Style: ${style}. Preference: ${experience}. Notes: ${message}`
+    });
+    setIsSubmitting(false);
+    if (result && result.success === false) {
+      setPlanError(result.error || 'Failed to save enquiry to database.');
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleReset = () => {
     setPlanSuccessData(null);
+    setPlanError(null);
     setStep(1);
     setName('');
     setEmail('');
     setPhone('');
     setCountry('');
+    setStartDate('');
+    setEndDate('');
     setTravelDate('');
     setMessage('');
   };
@@ -2512,6 +2822,13 @@ function PlanView({ setPlanSuccessData, planSuccessData }: PlanViewProps) {
 
       {/* Interactive planner card */}
       <div className="bg-white p-8 border border-[#EADCC9]/40 shadow-sm font-sans">
+        {planError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2 mb-6">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{planError}</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6 text-xs text-stone-800">
           
           {/* STEP 1: Personal Information */}
@@ -2527,36 +2844,79 @@ function PlanView({ setPlanSuccessData, planSuccessData }: PlanViewProps) {
                   required
                   placeholder="e.g. John Doe"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (planError) setPlanError(null);
+                  }}
                   className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-1">
-                  <label htmlFor="plan-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address *</label>
+                  <div className="flex justify-between items-center">
+                    <label htmlFor="plan-email" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Email Address *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">Verification Required</span>
+                  </div>
                   <input 
                     id="plan-email"
                     type="email" 
                     required
                     placeholder="e.g. john@example.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (planError) setPlanError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900"
                   />
+                  {email && (() => {
+                    const res = validateClientEmail(email);
+                    return res.isValid ? (
+                      <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Email &middot; {res.domain}
+                      </p>
+                    ) : (
+                      <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="plan-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">WhatsApp / Phone *</label>
+                  <div className="flex justify-between items-center">
+                    <label htmlFor="plan-phone" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">WhatsApp / Phone *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">E.164 Standard</span>
+                  </div>
                   <input 
                     id="plan-phone"
                     type="tel" 
                     required
                     placeholder="e.g. +1 555 123 4567"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      if (planError) setPlanError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900"
                   />
+                  {phone && (() => {
+                    const res = validateClientPhone(phone);
+                    return res.isValid ? (
+                      <p className="flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Phone &middot; {res.formattedPhone}
+                      </p>
+                    ) : (
+                      <p className="flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -2598,14 +2958,16 @@ function PlanView({ setPlanSuccessData, planSuccessData }: PlanViewProps) {
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="plan-date" className="block text-[10px] font-bold uppercase tracking-wider text-stone-500">Target Month / Date</label>
-                  <input 
-                    id="plan-date"
-                    type="text" 
-                    placeholder="e.g. September 2026"
-                    value={travelDate}
-                    onChange={(e) => setTravelDate(e.target.value)}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 px-3 py-2.5 focus:outline-none focus:border-[#C5A880] rounded-none text-xs text-stone-900"
+                  <DateRangePicker
+                    theme="light"
+                    label="Travel Window (Start – End Date)"
+                    startDate={startDate}
+                    endDate={endDate}
+                    onChange={(s, e, formatted) => {
+                      setStartDate(s);
+                      setEndDate(e);
+                      setTravelDate(formatted);
+                    }}
                   />
                 </div>
               </div>

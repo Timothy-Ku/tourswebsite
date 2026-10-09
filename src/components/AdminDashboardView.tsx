@@ -57,7 +57,8 @@ import {
   Maximize2,
   Minimize2,
   BarChart2,
-  TrendingUp
+  TrendingUp,
+  Upload
 } from 'lucide-react';
 import { 
   Destination, 
@@ -77,6 +78,9 @@ import {
 } from '../data/travelData';
 import { getStoredGaId, setStoredGaId, trackEvent, getAnalyticsSummary, trackEmailSent, getAnalyticsLogs } from '../utils/analytics';
 import { sendGmailMessage, getGmailProfile } from '../utils/gmail';
+import { validateClientEmail, validateClientPhone, verifyClientContact } from '../utils/validation';
+import { DateRangePicker, formatDateRangeSummary } from './DateRangePicker';
+import { ImageUploader } from './ImageUploader';
 import { 
   db, 
   auth, 
@@ -429,6 +433,8 @@ export default function AdminDashboardView({
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterPriority, setFilterPriority] = useState('All');
   const [filterCurator, setFilterCurator] = useState('All');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
   const [enquirySort, setEnquirySort] = useState<'newest' | 'oldest' | 'priority'>('newest');
 
   // Enquiries Modals & Interaction States
@@ -439,6 +445,8 @@ export default function AdminDashboardView({
     phone: '',
     country: '',
     destination: 'Kenya (Maasai Mara)',
+    startDate: '',
+    endDate: '',
     travelDate: '',
     travelers: '2 guests',
     style: 'Classic Luxury Safari',
@@ -449,6 +457,8 @@ export default function AdminDashboardView({
     message: ''
   });
   const [editingEnquiry, setEditingEnquiry] = useState<Enquiry | any | null>(null);
+  const [addEnquiryError, setAddEnquiryError] = useState<string | null>(null);
+  const [editEnquiryError, setEditEnquiryError] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailTemplateKey, setEmailTemplateKey] = useState<'welcome' | 'proposal' | 'followup' | 'confirmation'>('welcome');
   const [emailSubject, setEmailSubject] = useState('');
@@ -1164,20 +1174,33 @@ KAGZ Travel & Safaris`
     addAuditLog('Curator Note Logged', `Added note to Lead #${id}: "${text.slice(0, 35)}..."`, 'BOOKING');
   };
 
-  // Create new enquiry manually (phone / walk-in lead)
+  // Create new enquiry manually (phone / walk-in lead) - Strictly verifies email & phone
   const handleCreateEnquiry = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEnquiryForm.name) return;
+    if (!newEnquiryForm.name?.trim()) {
+      setAddEnquiryError('Guest full name is required.');
+      return;
+    }
 
+    // Verify client email and phone number before storing to database
+    const verification = verifyClientContact(newEnquiryForm.email, newEnquiryForm.phone);
+    if (!verification.isValid) {
+      setAddEnquiryError(verification.errorMessage || 'Please verify client email and phone number before creating.');
+      return;
+    }
+
+    setAddEnquiryError(null);
     const id = `enq-${Date.now()}`;
     const newLead: Enquiry = {
       id,
       name: newEnquiryForm.name.trim(),
-      email: newEnquiryForm.email?.trim() || 'no-email@kagztravel.com',
-      phone: newEnquiryForm.phone?.trim() || 'N/A',
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
       country: newEnquiryForm.country?.trim() || 'International',
       destination: newEnquiryForm.destination || 'Kenya (Maasai Mara)',
       travelDate: newEnquiryForm.travelDate || 'Flexible / 2027',
+      startDate: newEnquiryForm.startDate || '',
+      endDate: newEnquiryForm.endDate || '',
       travelers: newEnquiryForm.travelers || '2 guests',
       style: newEnquiryForm.style || 'Classic Luxury Safari',
       message: newEnquiryForm.message || 'Direct lead logged by concierge desk.',
@@ -1187,12 +1210,15 @@ KAGZ Travel & Safaris`
       budget: newEnquiryForm.budget || '$15,000 - $25,000',
       source: newEnquiryForm.source || 'Telephone / Concierge Inbound',
       dateSubmitted: new Date().toISOString().split('T')[0],
+      emailVerified: true,
+      phoneVerified: true,
+      verifiedAt: new Date().toISOString(),
       notes: [
         {
           id: 'note-init',
           author: sessionAdminName || 'Admin',
           date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-          text: `Inbound lead logged into system via ${newEnquiryForm.source || 'Concierge Desk'}.`
+          text: `Inbound lead verified & logged into system via ${newEnquiryForm.source || 'Concierge Desk'}.`
         }
       ]
     };
@@ -1214,6 +1240,8 @@ KAGZ Travel & Safaris`
       phone: '',
       country: '',
       destination: 'Kenya (Maasai Mara)',
+      startDate: '',
+      endDate: '',
       travelDate: '',
       travelers: '2 guests',
       style: 'Classic Luxury Safari',
@@ -1223,28 +1251,46 @@ KAGZ Travel & Safaris`
       source: 'Telephone / Concierge Inbound',
       message: ''
     });
-    addAuditLog('Inbound Lead Logged', `Logged new lead for ${newLead.name}`, 'BOOKING');
+    addAuditLog('Inbound Lead Logged', `Logged verified lead for ${newLead.name} (${newLead.email})`, 'BOOKING');
   };
 
-  // Save edited enquiry
+  // Save edited enquiry - Strictly verifies email & phone before database update
   const handleSaveEditedEnquiry = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingEnquiry?.id || !editingEnquiry.name) return;
+    if (!editingEnquiry?.id || !editingEnquiry.name?.trim()) return;
+
+    // Verify client email and phone number before storing to database
+    const verification = verifyClientContact(editingEnquiry.email, editingEnquiry.phone);
+    if (!verification.isValid) {
+      setEditEnquiryError(verification.errorMessage || 'Please verify client email and phone number before saving.');
+      return;
+    }
+
+    setEditEnquiryError(null);
+    const updatedLead: Enquiry = {
+      ...editingEnquiry,
+      name: editingEnquiry.name.trim(),
+      email: verification.emailResult.formattedEmail,
+      phone: verification.phoneResult.formattedPhone,
+      emailVerified: true,
+      phoneVerified: true,
+      verifiedAt: new Date().toISOString()
+    };
 
     try {
-      await setDoc(doc(db, 'enquiries', editingEnquiry.id), editingEnquiry, { merge: true });
+      await setDoc(doc(db, 'enquiries', editingEnquiry.id), updatedLead, { merge: true });
     } catch (err) {
       console.warn("Firestore update enquiry:", err);
     }
 
-    const updated = enquiries.map(enq => enq.id === editingEnquiry.id ? editingEnquiry : enq);
+    const updated = enquiries.map(enq => enq.id === editingEnquiry.id ? updatedLead : enq);
     setEnquiries(updated);
     localStorage.setItem('kagz_enquiries', JSON.stringify(updated));
     if (selectedEnquiry?.id === editingEnquiry.id) {
-      setSelectedEnquiry(editingEnquiry);
+      setSelectedEnquiry(updatedLead);
     }
     setEditingEnquiry(null);
-    addAuditLog('Lead Dossier Updated', `Modified details for #${editingEnquiry.id} (${editingEnquiry.name})`, 'BOOKING');
+    addAuditLog('Lead Dossier Updated', `Verified and modified details for #${editingEnquiry.id} (${updatedLead.name})`, 'BOOKING');
   };
 
   const handleDeleteEnquiry = async (id: string) => {
@@ -1362,37 +1408,30 @@ KAGZ Travel & Safaris`
       let deliveryReceiptText = '';
       const cachedToken = getCachedAccessToken();
 
-      // Dispatch via Gmail API if token available or requested
-      if (cachedToken || !smtpSettings.host) {
-        let activeToken = cachedToken;
-        if (!activeToken) {
-          setEmailSendProgress('Connecting to Google Workspace Gmail API...');
-          const authRes = await loginWithGoogle();
-          activeToken = authRes.accessToken;
-        }
-
-        if (!activeToken) {
-          throw new Error('OAuth access token required for Gmail API dispatch.');
-        }
-
+      // Multi-Tier Dispatch Strategy:
+      // Tier 1: Official Gmail API if OAuth token is active
+      if (cachedToken) {
         setEmailSendProgress(`Dispatching MIME RFC 2822 payload via Official Gmail API to ${recipientEmail}...`);
-        const gmailRes = await sendGmailMessage(activeToken, {
-          recipientEmail,
-          recipientName,
-          senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
-          senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
-          subject: emailSubject,
-          body: emailBody,
-        });
+        try {
+          const gmailRes = await sendGmailMessage(cachedToken, {
+            recipientEmail,
+            recipientName,
+            senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
+            senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
+            subject: emailSubject,
+            body: emailBody,
+          });
 
-        msgId = gmailRes.messageId;
-        deliveryReceiptText = gmailRes.response || '250 2.0.0 OK Direct Gmail API Dispatch';
-      } else {
-        // Fallback to Server-Side Nodemailer SMTP Proxy
-        setEmailSendProgress(`Connecting to SMTP Gateway (${smtpSettings.host}:${smtpSettings.port})...`);
-        await new Promise(r => setTimeout(r, 200));
+          msgId = gmailRes.messageId;
+          deliveryReceiptText = gmailRes.response || '250 2.0.0 OK Direct Gmail API Dispatch';
+        } catch (gmailErr: any) {
+          console.warn("Gmail API attempt error, attempting server SMTP proxy fallback:", gmailErr);
+        }
+      }
 
-        setEmailSendProgress(`Sending MIME payload via SMTP to ${recipientEmail}...`);
+      // Tier 2: Server-Side Nodemailer SMTP Proxy (Configured with Gmail Gateway)
+      if (!msgId) {
+        setEmailSendProgress(`Connecting to SMTP Mail Gateway & transmitting to ${recipientEmail}...`);
         
         const res = await fetch('/api/send-email', {
           method: 'POST',
@@ -1410,12 +1449,34 @@ KAGZ Travel & Safaris`
 
         const data = await res.json();
 
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'SMTP transmission error from mail server.');
-        }
+        if (res.ok && data.success) {
+          msgId = data.messageId || `smtp-${Date.now()}`;
+          deliveryReceiptText = data.response || `250 2.0.0 OK Delivered via SMTP (${data.smtpServer || 'Direct Mail'})`;
+        } else {
+          // If server SMTP fails and we had no token, try prompting for Gmail OAuth
+          if (!cachedToken) {
+            setEmailSendProgress('Connecting to Google Workspace Gmail API...');
+            const authRes = await loginWithGoogle();
+            const activeToken = authRes.accessToken;
+            if (activeToken) {
+              setEmailSendProgress(`Dispatching MIME RFC 2822 payload via Gmail API to ${recipientEmail}...`);
+              const gmailRes = await sendGmailMessage(activeToken, {
+                recipientEmail,
+                recipientName,
+                senderEmail: emailSenderEmail || sessionAdminEmail || 'kungutim541@gmail.com',
+                senderName: emailSenderName || sessionAdminName || 'Timothy Kungu',
+                subject: emailSubject,
+                body: emailBody,
+              });
+              msgId = gmailRes.messageId;
+              deliveryReceiptText = gmailRes.response || '250 2.0.0 OK Direct Gmail API Dispatch';
+            }
+          }
 
-        msgId = data.messageId || `smtp-${Date.now()}`;
-        deliveryReceiptText = data.response || `250 2.0.0 OK Delivered via SMTP (${data.smtpServer || 'Direct Mail'})`;
+          if (!msgId) {
+            throw new Error(data.error || 'Direct mail delivery interrupted. Please check network connectivity or use the fallback mail link.');
+          }
+        }
       }
 
       const timeFormatted = new Date().toLocaleString('en-US', {
@@ -2036,7 +2097,16 @@ KAGZ Travel & Safaris`
       enq.assignedTo,
       enq.source
     ].some(field => field?.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesStatus && matchesPriority && matchesCurator && matchesSearch;
+
+    const matchesDateRange = (!filterStartDate && !filterEndDate) || (() => {
+      const start = enq.startDate || enq.dateSubmitted || '';
+      const end = enq.endDate || enq.startDate || enq.dateSubmitted || '';
+      if (filterStartDate && end && end < filterStartDate) return false;
+      if (filterEndDate && start && start > filterEndDate) return false;
+      return true;
+    })();
+
+    return matchesStatus && matchesPriority && matchesCurator && matchesSearch && matchesDateRange;
   }).sort((a, b) => {
     if (enquirySort === 'newest') return (b.dateSubmitted || b.id || '').localeCompare(a.dateSubmitted || a.id || '');
     if (enquirySort === 'oldest') return (a.dateSubmitted || a.id || '').localeCompare(b.dateSubmitted || b.id || '');
@@ -2486,8 +2556,8 @@ KAGZ Travel & Safaris`
                 onClick={() => setEditingGalleryItem({ src: '', alt: '', category: 'Wildlife' })}
                 className="px-4 py-2 bg-[#C5A880] text-[#1C2421] hover:bg-[#1C2421] hover:text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Photo</span>
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload Media Photo</span>
               </button>
             )}
 
@@ -2732,8 +2802,41 @@ KAGZ Travel & Safaris`
                   </select>
                 </div>
 
+                {/* Date Range Filter (Start Date to End Date) */}
+                <div className="flex items-center gap-1.5 bg-[#FAF7F2] border border-stone-200 px-2 py-1">
+                  <span className="text-[10px] uppercase font-bold text-stone-400">Date:</span>
+                  <input
+                    type="date"
+                    value={filterStartDate}
+                    onChange={(e) => setFilterStartDate(e.target.value)}
+                    title="Filter from Start Date"
+                    aria-label="Filter from Start Date"
+                    className="bg-transparent text-xs text-stone-800 focus:outline-none cursor-pointer"
+                  />
+                  <span className="text-stone-400 text-xs">–</span>
+                  <input
+                    type="date"
+                    value={filterEndDate}
+                    min={filterStartDate}
+                    onChange={(e) => setFilterEndDate(e.target.value)}
+                    title="Filter to End Date"
+                    aria-label="Filter to End Date"
+                    className="bg-transparent text-xs text-stone-800 focus:outline-none cursor-pointer"
+                  />
+                  {(filterStartDate || filterEndDate) && (
+                    <button
+                      type="button"
+                      onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }}
+                      className="text-stone-400 hover:text-stone-800 ml-0.5 text-xs font-bold"
+                      title="Clear date range filter"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
                 {/* Clear Filters Reset */}
-                {(filterStatus !== 'All' || filterPriority !== 'All' || filterCurator !== 'All' || searchQuery) && (
+                {(filterStatus !== 'All' || filterPriority !== 'All' || filterCurator !== 'All' || searchQuery || filterStartDate || filterEndDate) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2741,6 +2844,8 @@ KAGZ Travel & Safaris`
                       setFilterPriority('All');
                       setFilterCurator('All');
                       setSearchQuery('');
+                      setFilterStartDate('');
+                      setFilterEndDate('');
                     }}
                     className="text-[10px] text-stone-500 hover:text-stone-900 underline font-bold uppercase tracking-wider ml-1 cursor-pointer"
                   >
@@ -2802,7 +2907,14 @@ KAGZ Travel & Safaris`
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[11px] text-stone-500 truncate">{enq.email}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <p className="text-[11px] text-stone-500 truncate">{enq.email}</p>
+                                {(enq.emailVerified || (enq.email && validateClientEmail(enq.email).isValid)) && (
+                                  <span className="inline-flex items-center text-emerald-600 shrink-0" title="Verified Client Contact">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="flex flex-col items-end gap-1 shrink-0">
@@ -3174,7 +3286,14 @@ KAGZ Travel & Safaris`
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                               <div>
-                                <span className="block text-[10px] uppercase font-bold text-stone-400">Email Address (Direct Target)</span>
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="block text-[10px] uppercase font-bold text-stone-400">Email Address (Direct Target)</span>
+                                  {(selectedEnquiry.emailVerified || (selectedEnquiry.email && validateClientEmail(selectedEnquiry.email).isValid)) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Verified
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className="font-mono text-stone-900 select-all font-medium">{selectedEnquiry.email}</span>
                                   <button
@@ -3201,7 +3320,14 @@ KAGZ Travel & Safaris`
                               </div>
 
                               <div>
-                                <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                                  {(selectedEnquiry.phoneVerified || (selectedEnquiry.phone && validateClientPhone(selectedEnquiry.phone).isValid)) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Verified
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className="font-mono text-stone-900 select-all font-medium">{selectedEnquiry.phone || 'Not provided'}</span>
                                   {selectedEnquiry.phone && (
@@ -3741,12 +3867,11 @@ KAGZ Travel & Safaris`
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Hero Image URL</label>
-                  <input
-                    type="url"
-                    value={editingDest.image}
-                    onChange={(e) => setEditingDest({ ...editingDest, image: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 font-mono text-xs"
+                  <ImageUploader
+                    value={editingDest.image || ''}
+                    onChange={(url) => setEditingDest({ ...editingDest, image: url })}
+                    label="Destination Hero Image"
+                    helperText="Upload a high-resolution safari landscape or select from curated presets."
                   />
                 </div>
 
@@ -3851,12 +3976,11 @@ KAGZ Travel & Safaris`
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Cover Image URL</label>
-                  <input
-                    type="url"
-                    value={editingTour.image}
-                    onChange={(e) => setEditingTour({ ...editingTour, image: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 font-mono text-xs"
+                  <ImageUploader
+                    value={editingTour.image || ''}
+                    onChange={(url) => setEditingTour({ ...editingTour, image: url })}
+                    label="Safari Itinerary Cover Photo"
+                    helperText="Upload wildlife imagery or choose from the curated safari library."
                   />
                 </div>
 
@@ -3958,6 +4082,15 @@ KAGZ Travel & Safaris`
                 </div>
 
                 <div>
+                  <ImageUploader
+                    value={editingBlog.image || ''}
+                    onChange={(url) => setEditingBlog({ ...editingBlog, image: url })}
+                    label="Guide Feature Photo"
+                    helperText="Upload an editorial photo or pick from safari presets."
+                  />
+                </div>
+
+                <div>
                   <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Excerpt</label>
                   <textarea
                     rows={2}
@@ -3985,8 +4118,13 @@ KAGZ Travel & Safaris`
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredBlogs.map(b => (
-                  <div key={b.id} className="bg-white border border-stone-200 shadow-sm p-6 flex flex-col justify-between space-y-4">
+                  <div key={b.id} className="bg-white border border-stone-200 shadow-sm p-6 flex flex-col justify-between space-y-4 overflow-hidden">
                     <div>
+                      {b.image && (
+                        <div className="h-32 -mx-6 -mt-6 mb-4 overflow-hidden bg-stone-100">
+                          <img src={b.image} alt={b.title} className="w-full h-full object-cover" />
+                        </div>
+                      )}
                       <div className="flex justify-between items-start gap-2 mb-2">
                         <span className="text-[9px] font-bold uppercase text-[#C5A880] bg-[#FAF7F2] px-2 py-0.5 border border-[#EADCC9]/50">{b.category}</span>
                         <span className="text-[10px] text-stone-400">{b.date}</span>
@@ -4180,12 +4318,11 @@ KAGZ Travel & Safaris`
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Image URL</label>
-                  <input
-                    type="url"
-                    value={editingOffer.image}
-                    onChange={(e) => setEditingOffer({ ...editingOffer, image: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 font-mono text-xs"
+                  <ImageUploader
+                    value={editingOffer.image || ''}
+                    onChange={(url) => setEditingOffer({ ...editingOffer, image: url })}
+                    label="Offer Campaign Banner"
+                    helperText="Upload offer imagery or select from safari stock photos."
                   />
                 </div>
 
@@ -4252,14 +4389,12 @@ KAGZ Travel & Safaris`
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Image URL *</label>
-                  <input
-                    type="url"
+                  <ImageUploader
+                    value={editingGalleryItem.src || ''}
+                    onChange={(url) => setEditingGalleryItem({ ...editingGalleryItem, src: url })}
+                    label="Media Asset (Photo Upload)"
                     required
-                    placeholder="https://images.unsplash.com/..."
-                    value={editingGalleryItem.src}
-                    onChange={(e) => setEditingGalleryItem({ ...editingGalleryItem, src: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 font-mono text-xs"
+                    helperText="Upload any safari photo from your device or select from presets."
                   />
                 </div>
 
@@ -4296,7 +4431,31 @@ KAGZ Travel & Safaris`
                 </div>
               </form>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              <div className="space-y-6">
+                {/* Direct Photo & Media Uploader Banner */}
+                <div className="bg-white border border-stone-200 p-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-full bg-[#FAF7F2] border border-[#C5A880]/40 flex items-center justify-center text-[#C5A880] shrink-0">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-sm font-bold text-stone-900">Direct Photo & Media Uploader</h3>
+                      <p className="text-[11px] text-stone-500">
+                        Upload high-resolution camera photos, wildlife shots, or lodge imagery with auto-compression.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingGalleryItem({ src: '', alt: '', category: 'Wildlife' })}
+                    className="px-4 py-2.5 bg-[#1C2421] text-white hover:bg-[#C5A880] hover:text-[#1C2421] text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload New Photo</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {gallery.map(img => (
                   <div key={img.id} className="group relative bg-white border border-stone-200 overflow-hidden shadow-sm flex flex-col justify-between">
                     <div className="relative h-44 overflow-hidden bg-stone-100">
@@ -4332,7 +4491,8 @@ KAGZ Travel & Safaris`
                   </div>
                 ))}
               </div>
-            )}
+            </div>
+          )}
           </div>
         )}
 
@@ -5315,10 +5475,20 @@ KAGZ Travel & Safaris`
                 <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold">Concierge Inbound</span>
                 <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">Log New Guest Lead</h3>
               </div>
-              <button type="button" onClick={() => setShowAddEnquiryModal(false)} className="text-stone-400 hover:text-stone-700">
+              <button type="button" onClick={() => { setShowAddEnquiryModal(false); setAddEnquiryError(null); }} className="text-stone-400 hover:text-stone-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {addEnquiryError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2 mb-4">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-medium">Verification Failed</strong>
+                  <span>{addEnquiryError}</span>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleCreateEnquiry} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -5329,33 +5499,81 @@ KAGZ Travel & Safaris`
                     required
                     placeholder="e.g. Lord Charles Sterling"
                     value={newEnquiryForm.name}
-                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, name: e.target.value })}
+                    onChange={(e) => {
+                      setNewEnquiryForm({ ...newEnquiryForm, name: e.target.value });
+                      if (addEnquiryError) setAddEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Email Address *</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500">Email Address *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">Verification Required</span>
+                  </div>
                   <input
                     type="email"
                     required
                     placeholder="e.g. charles@sterling.co.uk"
                     value={newEnquiryForm.email}
-                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, email: e.target.value })}
+                    onChange={(e) => {
+                      setNewEnquiryForm({ ...newEnquiryForm, email: e.target.value });
+                      if (addEnquiryError) setAddEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
+                  {newEnquiryForm.email ? (() => {
+                    const res = validateClientEmail(newEnquiryForm.email);
+                    return res.isValid ? (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Email &middot; Domain: {res.domain}
+                      </p>
+                    ) : (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })() : (
+                    <p className="mt-1 text-[9px] text-stone-400">Must be a valid RFC 5322 email with legitimate TLD.</p>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Phone Number / WhatsApp</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500">Phone Number / WhatsApp *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">E.164 Standard</span>
+                  </div>
                   <input
                     type="text"
+                    required
                     placeholder="e.g. +44 7911 123456"
                     value={newEnquiryForm.phone}
-                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, phone: e.target.value })}
+                    onChange={(e) => {
+                      setNewEnquiryForm({ ...newEnquiryForm, phone: e.target.value });
+                      if (addEnquiryError) setAddEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
+                  {newEnquiryForm.phone ? (() => {
+                    const res = validateClientPhone(newEnquiryForm.phone);
+                    return res.isValid ? (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Phone &middot; Standard: {res.formattedPhone}
+                      </p>
+                    ) : (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })() : (
+                    <p className="mt-1 text-[9px] text-stone-400">Include country code (e.g. +254, +1, +44, 7-15 digits).</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Country of Origin</label>
@@ -5382,13 +5600,19 @@ KAGZ Travel & Safaris`
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Approximate Travel Date</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. July - August 2027"
-                    value={newEnquiryForm.travelDate}
-                    onChange={(e) => setNewEnquiryForm({ ...newEnquiryForm, travelDate: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  <DateRangePicker
+                    theme="light"
+                    label="Travel Window (Start – End Date)"
+                    startDate={newEnquiryForm.startDate || ''}
+                    endDate={newEnquiryForm.endDate || ''}
+                    onChange={(s, e, formatted) => {
+                      setNewEnquiryForm({
+                        ...newEnquiryForm,
+                        startDate: s,
+                        endDate: e,
+                        travelDate: formatted
+                      });
+                    }}
                   />
                 </div>
               </div>
@@ -5511,10 +5735,20 @@ KAGZ Travel & Safaris`
                 <span className="text-[9px] uppercase tracking-widest text-[#C5A880] font-bold font-mono">#{editingEnquiry.id}</span>
                 <h3 className="font-serif text-xl font-bold text-stone-900 mt-0.5">Edit Guest Lead Details</h3>
               </div>
-              <button type="button" onClick={() => setEditingEnquiry(null)} className="text-stone-400 hover:text-stone-700">
+              <button type="button" onClick={() => { setEditingEnquiry(null); setEditEnquiryError(null); }} className="text-stone-400 hover:text-stone-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {editEnquiryError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2 mb-4">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-medium">Verification Failed</strong>
+                  <span>{editEnquiryError}</span>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSaveEditedEnquiry} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -5524,31 +5758,79 @@ KAGZ Travel & Safaris`
                     type="text"
                     required
                     value={editingEnquiry.name || ''}
-                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, name: e.target.value })}
+                    onChange={(e) => {
+                      setEditingEnquiry({ ...editingEnquiry, name: e.target.value });
+                      if (editEnquiryError) setEditEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Email Address *</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500">Email Address *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">Verification Required</span>
+                  </div>
                   <input
                     type="email"
                     required
                     value={editingEnquiry.email || ''}
-                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, email: e.target.value })}
+                    onChange={(e) => {
+                      setEditingEnquiry({ ...editingEnquiry, email: e.target.value });
+                      if (editEnquiryError) setEditEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
+                  {editingEnquiry.email ? (() => {
+                    const res = validateClientEmail(editingEnquiry.email);
+                    return res.isValid ? (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Email &middot; Domain: {res.domain}
+                      </p>
+                    ) : (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })() : (
+                    <p className="mt-1 text-[9px] text-stone-400">Must be a valid RFC 5322 email with legitimate TLD.</p>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Phone / WhatsApp</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-bold uppercase text-stone-500">Phone / WhatsApp *</label>
+                    <span className="text-[9px] text-[#C5A880] font-semibold">E.164 Standard</span>
+                  </div>
                   <input
                     type="text"
+                    required
                     value={editingEnquiry.phone || ''}
-                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, phone: e.target.value })}
+                    onChange={(e) => {
+                      setEditingEnquiry({ ...editingEnquiry, phone: e.target.value });
+                      if (editEnquiryError) setEditEnquiryError(null);
+                    }}
                     className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
                   />
+                  {editingEnquiry.phone ? (() => {
+                    const res = validateClientPhone(editingEnquiry.phone);
+                    return res.isValid ? (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                        Verified Phone &middot; Standard: {res.formattedPhone}
+                      </p>
+                    ) : (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-rose-600">
+                        <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                        {res.error}
+                      </p>
+                    );
+                  })() : (
+                    <p className="mt-1 text-[9px] text-stone-400">Include country code (e.g. +254, +1, +44, 7-15 digits).</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Country</label>
@@ -5573,12 +5855,19 @@ KAGZ Travel & Safaris`
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-stone-500 mb-1">Travel Date</label>
-                  <input
-                    type="text"
-                    value={editingEnquiry.travelDate || ''}
-                    onChange={(e) => setEditingEnquiry({ ...editingEnquiry, travelDate: e.target.value })}
-                    className="w-full bg-[#FAF7F2] border border-stone-200 p-2.5 text-stone-900 text-xs focus:outline-none focus:border-[#C5A880]"
+                  <DateRangePicker
+                    theme="light"
+                    label="Travel Window (Start – End Date)"
+                    startDate={editingEnquiry.startDate || ''}
+                    endDate={editingEnquiry.endDate || ''}
+                    onChange={(s, e, formatted) => {
+                      setEditingEnquiry({
+                        ...editingEnquiry,
+                        startDate: s,
+                        endDate: e,
+                        travelDate: formatted
+                      });
+                    }}
                   />
                 </div>
               </div>
@@ -6395,11 +6684,25 @@ KAGZ Travel & Safaris`
               {/* Guest Profile & Direct Contacts */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-[#FAF7F2] border border-stone-200">
                 <div>
-                  <span className="block text-[10px] uppercase font-bold text-stone-400">Direct Email</span>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="block text-[10px] uppercase font-bold text-stone-400">Direct Email</span>
+                    {(selectedEnquiry.emailVerified || (selectedEnquiry.email && validateClientEmail(selectedEnquiry.email).isValid)) && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Verified
+                      </span>
+                    )}
+                  </div>
                   <p className="font-mono font-medium text-stone-900 mt-0.5 select-all">{selectedEnquiry.email}</p>
                 </div>
                 <div>
-                  <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="block text-[10px] uppercase font-bold text-stone-400">Phone / WhatsApp</span>
+                    {(selectedEnquiry.phoneVerified || (selectedEnquiry.phone && validateClientPhone(selectedEnquiry.phone).isValid)) && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Verified
+                      </span>
+                    )}
+                  </div>
                   <p className="font-mono font-medium text-stone-900 mt-0.5 select-all">{selectedEnquiry.phone || 'N/A'}</p>
                 </div>
                 <div>

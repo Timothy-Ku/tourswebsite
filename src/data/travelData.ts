@@ -40,6 +40,7 @@ export interface Article {
   content: string;
   metaDescription: string;
   author: string;
+  image?: string;
   related: string[];
 }
 
@@ -448,6 +449,8 @@ export interface Enquiry {
   country?: string;
   destination: string;
   travelDate: string;
+  startDate?: string;
+  endDate?: string;
   travelers: string;
   style: string;
   message: string;
@@ -459,6 +462,9 @@ export interface Enquiry {
   source?: string;
   notes?: EnquiryNote[];
   emails?: EnquiryEmailRecord[];
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
+  verifiedAt?: string;
 }
 
 export const DEFAULT_ENQUIRIES: Enquiry[] = [
